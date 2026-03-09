@@ -51,7 +51,8 @@
               "cli/discover",
               "cli/list-rules",
               "cli/explain",
-              "cli/init"
+              "cli/init",
+              "cli/version"
             ]
           },
           {

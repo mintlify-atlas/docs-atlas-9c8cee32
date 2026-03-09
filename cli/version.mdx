@@ -1,0 +1,92 @@
+---
+title: aguara version
+description: Display the Aguara version and check for updates
+---
+
+## Overview
+
+The `aguara version` command displays the current version of Aguara and checks for available updates from the GitHub repository.
+
+## Usage
+
+```bash
+aguara version
+```
+
+## Output
+
+The command prints the version number and Git commit hash:
+
+```bash
+aguara 0.7.0 (commit: abc1234)
+```
+
+If a newer version is available, it will display an update notification:
+
+```bash
+aguara 0.6.0 (commit: def5678)
+Update available: 0.7.0 → https://github.com/garagon/aguara/releases/tag/v0.7.0
+```
+
+## Flags
+
+<ParamField path="--no-update-check" type="boolean" default="false">
+  Disable the automatic update check. Also respects the `AGUARA_NO_UPDATE_CHECK=1` environment variable.
+  
+  ```bash
+  aguara version --no-update-check
+  ```
+</ParamField>
+
+## Version Information
+
+The version and commit are embedded at build time using Go ldflags. When running from source without a release build, the version shows as `dev`:
+
+```bash
+aguara dev (commit: none)
+```
+
+## Update Checking
+
+By default, `aguara version` performs an asynchronous check against the GitHub releases API to determine if a newer version is available. This check:
+
+- Runs in the background and doesn't block command execution
+- Only contacts GitHub (no telemetry or analytics)
+- Can be disabled with `--no-update-check` or `AGUARA_NO_UPDATE_CHECK=1`
+- Times out after a few seconds if the network is unavailable
+
+The same update check also runs automatically when you execute `aguara scan`, unless disabled.
+
+## Examples
+
+### Check Version
+
+```bash
+aguara version
+```
+
+### Disable Update Check
+
+```bash
+aguara version --no-update-check
+```
+
+### Globally Disable Update Checks
+
+Set the environment variable to disable update checks for all commands:
+
+```bash
+export AGUARA_NO_UPDATE_CHECK=1
+aguara version  # no update check performed
+```
+
+## Related Commands
+
+<CardGroup cols={2}>
+  <Card title="aguara scan" icon="shield" href="/cli/scan">
+    Scan files for security issues
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install or update Aguara
+  </Card>
+</CardGroup>
