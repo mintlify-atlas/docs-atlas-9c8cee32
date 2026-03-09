@@ -1,0 +1,145 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Aguara",
+  "projectDescription": "Security scanner for AI agent skills and MCP servers with 177 detection rules across 13 categories",
+  "theme": "aspen",
+  "primaryColor": "#04f441",
+  "lightColor": "#04631e",
+  "darkColor": "#0b0c0b",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/detection-layers",
+              "concepts/confidence-scoring"
+            ]
+          },
+          {
+            "group": "CLI Usage",
+            "pages": [
+              "cli/scan",
+              "cli/discover",
+              "cli/list-rules",
+              "cli/explain",
+              "cli/init"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/config-file",
+              "configuration/ignore-patterns",
+              "configuration/inline-ignore",
+              "configuration/rule-overrides"
+            ]
+          },
+          {
+            "group": "CI/CD Integration",
+            "pages": [
+              "ci/github-actions",
+              "ci/gitlab-ci",
+              "ci/docker"
+            ]
+          },
+          {
+            "group": "Rules & Detection",
+            "pages": [
+              "rules/overview",
+              "rules/categories",
+              "rules/custom-rules"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/mcp-discovery",
+              "advanced/rug-pull-detection",
+              "advanced/incremental-scanning",
+              "advanced/output-formats"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Go Library API",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "api/overview",
+              "api/scan",
+              "api/scan-content",
+              "api/discover",
+              "api/list-rules",
+              "api/explain-rule"
+            ]
+          },
+          {
+            "group": "Types & Options",
+            "pages": [
+              "api/types",
+              "api/options"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Ecosystem",
+        "groups": [
+          {
+            "group": "Related Projects",
+            "pages": [
+              "ecosystem/aguara-mcp",
+              "ecosystem/aguara-watch"
+            ]
+          },
+          {
+            "group": "Community",
+            "pages": [
+              "community/contributing",
+              "community/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "177 detection rules across 13 security categories",
+    "4-layer analysis engine (pattern matching, NLP, taint tracking, rug-pull detection)",
+    "MCP client auto-discovery across 17 platforms",
+    "Confidence scoring (0.0-1.0) for every finding",
+    "CI-ready with JSON, SARIF, and Markdown output",
+    "GitHub Action with SARIF upload",
+    "Custom YAML rules without code",
+    "Go library API for embedding in other tools",
+    "Fully offline, no API keys or cloud required",
+    "Deterministic and reproducible scans"
+  ],
+  "publicApiSurface": [
+    "aguara scan [path]",
+    "aguara discover",
+    "aguara list-rules",
+    "aguara explain <RULE_ID>",
+    "aguara init [path]",
+    "aguara version",
+    "aguara.Scan(ctx, path, ...opts)",
+    "aguara.ScanContent(ctx, content, filename, ...opts)",
+    "aguara.Discover()",
+    "aguara.ListRules(...opts)",
+    "aguara.ExplainRule(id, ...opts)"
+  ]
+}
