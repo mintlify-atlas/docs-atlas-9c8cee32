@@ -1,0 +1,291 @@
+---
+title: Ignore Patterns
+description: Skip files and directories during scanning using .aguaraignore and glob patterns
+---
+
+Aguara provides multiple ways to exclude files from scanning: a `.aguaraignore` file, the `ignore` field in `.aguara.yml`, and automatic exclusions for common directories.
+
+## .aguaraignore File
+
+Create a `.aguaraignore` file in your scan root directory to specify patterns for files that should be skipped. The syntax follows gitignore conventions.
+
+### Example .aguaraignore
+
+```gitignore .aguaraignore
+# Dependencies
+vendor/
+node_modules/
+.venv/
+__pycache__/
+
+# Build artifacts
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Test coverage
+coverage/
+*.cover
+```
+
+### Pattern Syntax
+
+`.aguaraignore` supports glob patterns:
+
+<ParamField path="*" type="pattern">
+  Matches any characters except `/` (directory separator)
+  
+  ```
+  *.log        # Matches: debug.log, error.log
+  test*.md     # Matches: test.md, test-cases.md
+  ```
+</ParamField>
+
+<ParamField path="?" type="pattern">
+  Matches exactly one character
+  
+  ```
+  test?.md     # Matches: test1.md, testA.md
+               # Does NOT match: test10.md
+  ```
+</ParamField>
+
+<ParamField path="[...]" type="pattern">
+  Matches any character in the brackets
+  
+  ```
+  test[0-9].md       # Matches: test0.md, test5.md
+  file[abc].txt      # Matches: filea.txt, fileb.txt
+  ```
+</ParamField>
+
+<ParamField path="**/" type="pattern">
+  Matches directories at any depth (recursive glob)
+  
+  ```
+  vendor/**          # Matches anything under vendor/ at any depth
+  **/node_modules/   # Matches node_modules/ anywhere in tree
+  **/*.log           # Matches all .log files at any depth
+  src/**/test.md     # Matches test.md anywhere under src/
+  ```
+</ParamField>
+
+### Comments
+
+Lines starting with `#` are treated as comments and ignored:
+
+```gitignore
+# This is a comment
+vendor/
+
+# Another comment
+*.log
+```
+
+Blank lines are ignored.
+
+## Config File Ignore Patterns
+
+You can also specify ignore patterns in `.aguara.yml`:
+
+```yaml .aguara.yml
+ignore:
+  - "vendor/**"
+  - "node_modules/**"
+  - "*.log"
+  - ".git/"
+```
+
+Patterns from both `.aguaraignore` and the config file are combined. This is useful when:
+- Your team shares `.aguaraignore` but you want personal overrides in `.aguara.yml`
+- You're scanning multiple projects with different ignore rules
+
+<Note>
+Always quote patterns in YAML to prevent parsing issues, especially when using wildcards.
+</Note>
+
+## Automatic Exclusions
+
+Aguara automatically skips these directories and file types **without** configuration:
+
+### Always-Excluded Directories
+
+- `.git/` - Git repository metadata
+- `node_modules/` - Node.js dependencies
+- `.aguara/` - Aguara state files
+
+### Always-Excluded File Extensions
+
+Binary and media files are automatically skipped:
+
+**Executables & Libraries:**
+- `.exe`, `.dll`, `.so`, `.dylib`, `.o`, `.a`
+
+**Images:**
+- `.png`, `.jpg`, `.jpeg`, `.gif`, `.ico`, `.svg`
+
+**Fonts:**
+- `.woff`, `.woff2`, `.ttf`, `.eot`
+
+**Archives:**
+- `.zip`, `.tar`, `.gz`, `.bz2`, `.xz`, `.7z`
+
+**Media & Documents:**
+- `.pdf`, `.mp3`, `.mp4`, `.avi`, `.mov`, `.bin`
+
+<Tip>
+You cannot override automatic exclusions. If you need to scan binary files, you must extract or decode them first.
+</Tip>
+
+## Pattern Matching Examples
+
+### Match Specific Directories
+
+```gitignore
+# Match vendor/ at project root only
+vendor/
+
+# Match node_modules/ anywhere in project
+**/node_modules/
+
+# Match all __pycache__ directories
+**/__pycache__/
+```
+
+### Match File Types
+
+```gitignore
+# All .log files anywhere
+**/*.log
+
+# All .log files in root only
+*.log
+
+# All .pyc files under src/
+src/**/*.pyc
+```
+
+### Match Test Files
+
+```gitignore
+# All files starting with "test"
+test*
+
+# All files ending with "_test.md"
+**/*_test.md
+
+# All files in any "test" or "tests" directory
+**/test/**
+**/tests/**
+```
+
+### Combined Patterns
+
+```gitignore
+# Python virtual environments and cache
+.venv/
+__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Node.js
+node_modules/
+*.log
+npm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+*.egg-info/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+```
+
+## File Size Limits
+
+In addition to ignore patterns, Aguara skips files exceeding the maximum file size (default: 50 MB).
+
+Configure in `.aguara.yml`:
+
+```yaml .aguara.yml
+max_file_size: 104857600  # 100 MB in bytes
+```
+
+Or via CLI flag:
+
+```bash
+aguara scan . --max-file-size 100MB
+```
+
+**Allowed range:** 1 MB to 500 MB
+
+<Warning>
+Large files are **silently skipped**. Check scan output to see how many files were scanned vs. discovered.
+</Warning>
+
+## Precedence
+
+When Aguara decides whether to scan a file, it checks in this order:
+
+1. **Automatic exclusions** - Is it `.git/`, `node_modules/`, or a binary extension?
+2. **File size** - Does it exceed `max_file_size`?
+3. **Ignore patterns** - Does it match `.aguaraignore` or config `ignore` patterns?
+
+If any check matches, the file is skipped.
+
+## Debugging Ignore Patterns
+
+To verify which files are being scanned:
+
+1. Check the scan summary:
+   ```bash
+   aguara scan .
+   # Output shows: "Scanned 42 files in 1.2s"
+   ```
+
+2. Use `--format json` to see exact file list:
+   ```bash
+   aguara scan . --format json | jq '.findings[].file_path'
+   ```
+
+3. Test pattern matching:
+   ```bash
+   # If unsure whether a pattern matches, add it temporarily
+   # and check if scan results change
+   echo "suspicious-file.md" >> .aguaraignore
+   aguara scan .
+   ```
+
+## Creating .aguaraignore
+
+Generate a default `.aguaraignore` file:
+
+```bash
+aguara init
+```
+
+This creates `.aguaraignore` with common patterns for dependencies, build artifacts, IDE files, and logs.
+
+## Related
+
+- [Configuration File](/configuration/config-file) - Learn about `.aguara.yml` options
+- [Inline Ignore](/configuration/inline-ignore) - Suppress specific findings in code
+- [Rule Overrides](/configuration/rule-overrides) - Customize rule behavior

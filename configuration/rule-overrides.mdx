@@ -1,0 +1,382 @@
+---
+title: Rule Overrides
+description: Customize Aguara rule behavior by changing severity levels or disabling rules
+---
+
+Rule overrides allow you to adjust Aguara's built-in rules to match your project's security requirements. You can change severity levels or disable rules entirely.
+
+## Configuration File
+
+Define rule overrides in `.aguara.yml` using the `rule_overrides` section:
+
+```yaml .aguara.yml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: medium     # downgrade from critical to medium
+  CRED_004:
+    severity: low        # treat as low severity
+  EXTDL_004:
+    disabled: true       # disable this rule completely
+```
+
+### Changing Severity
+
+Set the `severity` field to one of: `critical`, `high`, `medium`, `low`, `info`
+
+```yaml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: high       # original severity is CRITICAL
+  EXFIL_002:
+    severity: medium     # original severity is HIGH
+```
+
+**Why change severity?**
+- Downgrade rules that produce too many false positives in your codebase
+- Upgrade rules that are particularly important for your threat model
+- Match your organization's severity definitions
+
+### Disabling Rules
+
+Set `disabled: true` to completely disable a rule:
+
+```yaml
+rule_overrides:
+  EXTDL_004:
+    disabled: true       # rule will not run
+  CRED_010:
+    disabled: true
+```
+
+Disabled rules:
+- Are **not evaluated** during scanning (better performance)
+- Do **not** appear in findings
+- Do **not** count toward `--fail-on` thresholds
+- Are **not shown** in `aguara list-rules` output (unless using `--format json`)
+
+<Warning>
+Disabling security rules reduces scan coverage. Document why rules are disabled and review periodically.
+</Warning>
+
+## CLI Flag: --disable-rule
+
+You can disable rules via the `--disable-rule` flag without editing configuration files:
+
+```bash
+aguara scan . --disable-rule PROMPT_INJECTION_001
+```
+
+### Disabling Multiple Rules
+
+Use the flag multiple times:
+
+```bash
+aguara scan . \
+  --disable-rule PROMPT_INJECTION_001 \
+  --disable-rule CRED_004 \
+  --disable-rule EXTDL_004
+```
+
+Or use comma-separated values:
+
+```bash
+aguara scan . --disable-rule PROMPT_INJECTION_001,CRED_004,EXTDL_004
+```
+
+### Combining with Config File
+
+CLI flags are **additive** with config file `disable_rules`:
+
+```yaml .aguara.yml
+disable_rules:
+  - CRED_004
+```
+
+```bash
+# Both CRED_004 (from config) and EXTDL_001 (from flag) are disabled
+aguara scan . --disable-rule EXTDL_001
+```
+
+## Config Field: disable_rules
+
+Alternative to `rule_overrides[<id>].disabled`, use the top-level `disable_rules` array:
+
+```yaml .aguara.yml
+disable_rules:
+  - PROMPT_INJECTION_001
+  - CRED_004
+  - EXTDL_004
+```
+
+This is equivalent to:
+
+```yaml .aguara.yml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    disabled: true
+  CRED_004:
+    disabled: true
+  EXTDL_004:
+    disabled: true
+```
+
+**When to use each:**
+- Use `disable_rules` for simple lists of disabled rules
+- Use `rule_overrides` when you also need to change severity
+
+## Complete Example
+
+```yaml .aguara.yml
+# Disable rules that don't apply to this project
+disable_rules:
+  - EXTDL_001   # We intentionally download dependencies
+  - MCP_003     # Not using MCP servers
+
+# Adjust severity for project-specific context
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: medium    # We have input validation, less critical
+  
+  CRED_004:
+    severity: low       # Test API keys are low risk
+  
+  EXFIL_005:
+    disabled: true      # Webhook integrations are expected
+  
+  SSRF_001:
+    severity: critical  # Internal services are high-value targets
+```
+
+## Override Rules by Category
+
+You cannot disable entire categories directly, but you can use `aguara list-rules` to generate a list:
+
+```bash
+# List all prompt-injection rule IDs
+aguara list-rules --category prompt-injection --format json | \
+  jq -r '.[].id'
+```
+
+Then add them to your config:
+
+```yaml .aguara.yml
+disable_rules:
+  - PROMPT_INJECTION_001
+  - PROMPT_INJECTION_002
+  - PROMPT_INJECTION_003
+  # ... etc
+```
+
+<Tip>
+Use custom rules instead of disabling entire categories. Create a replacement rule with adjusted patterns.
+</Tip>
+
+## Precedence
+
+When multiple override mechanisms are used, they are applied in this order:
+
+1. **Load built-in rules** (177 rules at default severity)
+2. **Load custom rules** (from `--rules` directory)
+3. **Apply `rule_overrides`** (from `.aguara.yml`)
+4. **Apply `disable_rules`** (from `.aguara.yml`)
+5. **Apply `--disable-rule` flags** (from CLI)
+
+Later steps override earlier ones. For example:
+
+```yaml .aguara.yml
+rule_overrides:
+  CRED_004:
+    severity: low       # Step 3: set to low
+
+disable_rules:
+  - CRED_004            # Step 4: disable completely (wins)
+```
+
+## Validation
+
+Aguara validates rule overrides:
+
+- **Invalid severity values** → warning, override ignored
+- **Unknown rule IDs** → warning, override ignored
+- **Conflicting overrides** → last one wins (config file, then CLI)
+
+Warnings are printed to stderr but do not stop execution.
+
+## Use Cases
+
+### False Positive Reduction
+
+```yaml .aguara.yml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: low       # Our docs discuss prompt injection
+```
+
+### Test Environments
+
+```yaml .aguara.yml
+disable_rules:
+  - CRED_004            # Test API keys are expected
+  - EXFIL_005           # Webhooks to test servers
+```
+
+### High-Security Projects
+
+```yaml .aguara.yml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: critical  # Already critical, but documenting importance
+  
+  CRED_004:
+    severity: critical  # Upgrade from high to critical
+  
+  EXTDL_001:
+    severity: critical  # Any external download is critical
+```
+
+### CI/CD Pipelines
+
+```yaml .aguara.yml
+fail_on: medium
+
+rule_overrides:
+  # Allow specific patterns in CI
+  EXTDL_004:
+    severity: low       # CI downloads dependencies
+  
+  # Block critical issues
+  PROMPT_INJECTION_001:
+    severity: critical
+  CRED_004:
+    severity: critical
+```
+
+## Alternatives
+
+### Inline Ignores
+
+For individual findings, use [inline ignore directives](/configuration/inline-ignore):
+
+```markdown
+<!-- aguara-ignore CRED_004 -->
+test_key: "sk-test-123"
+```
+
+### Ignore Patterns
+
+For entire files or directories, use [ignore patterns](/configuration/ignore-patterns):
+
+```yaml .aguara.yml
+ignore:
+  - "test/fixtures/**"  # Skip all test fixtures
+```
+
+### Custom Rules
+
+For new patterns, [write custom rules](/rules/custom-rules):
+
+```yaml custom-rules/internal.yml
+id: CUSTOM_001
+name: "Internal API reference"
+severity: HIGH
+category: custom
+patterns:
+  - type: regex
+    value: "https://internal\\.example\\.com"
+```
+
+## Listing Active Rules
+
+To see which rules are active after overrides:
+
+```bash
+# Terminal output (filtered by overrides)
+aguara list-rules
+
+# JSON output (includes disabled flag)
+aguara list-rules --format json | jq '.[] | select(.disabled != true)'
+```
+
+To see overridden severity:
+
+```bash
+aguara explain PROMPT_INJECTION_001
+# Shows: Severity: MEDIUM (overridden from CRITICAL)
+```
+
+## Best Practices
+
+### Document Overrides
+
+Add comments explaining why rules are overridden:
+
+```yaml .aguara.yml
+rule_overrides:
+  # We use supervised prompt injection in our testing framework
+  PROMPT_INJECTION_001:
+    severity: medium
+  
+  # Test API keys are rotated daily and scoped to localhost
+  CRED_004:
+    severity: low
+```
+
+### Review Periodically
+
+Disabled rules may become relevant as your codebase evolves:
+
+```yaml .aguara.yml
+# Disabled 2025-03-01: No MCP servers yet
+# TODO: Re-enable when we add MCP support
+disable_rules:
+  - MCP_001
+  - MCP_002
+```
+
+### Use Specific Overrides
+
+Prefer specific rule IDs over broad changes:
+
+```yaml
+# Good: disable specific rules
+disable_rules:
+  - PROMPT_INJECTION_001
+  - PROMPT_INJECTION_005
+
+# Bad: disabling many rules may hide real issues
+disable_rules:
+  - PROMPT_INJECTION_001
+  - PROMPT_INJECTION_002
+  - PROMPT_INJECTION_003
+  # ... 15 more rules
+```
+
+If you're disabling many rules, consider:
+- Using ignore patterns to skip files instead
+- Creating custom rules with adjusted patterns
+- Adjusting severity instead of disabling
+
+### Test Changes
+
+After adding overrides, verify the scan still catches real issues:
+
+```bash
+# Before override
+aguara scan . | grep CRED_004
+# 5 findings
+
+# After override
+aguara scan . | grep CRED_004
+# 0 findings (expected)
+
+# Verify other rules still work
+aguara scan .
+# Should still find other credential types
+```
+
+## Related
+
+- [Configuration File](/configuration/config-file) - Learn about `.aguara.yml` structure
+- [Inline Ignore](/configuration/inline-ignore) - Suppress findings in source files
+- [Custom Rules](/rules/custom-rules) - Write your own detection rules
+- [Rule Reference](/rules/overview) - Browse all built-in rules

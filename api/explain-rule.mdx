@@ -1,0 +1,336 @@
+---
+title: "ExplainRule()"
+description: "Get detailed information about a specific detection rule"
+---
+
+## Function Signature
+
+```go
+func ExplainRule(id string, opts ...Option) (*RuleDetail, error)
+```
+
+**Source**: `aguara.go:151`
+
+## Description
+
+Returns detailed information about a specific detection rule, including:
+
+- Full description and remediation guidance
+- Detection patterns (regex or contains)
+- True positive examples (should trigger)
+- False positive examples (should not trigger)
+
+Useful for understanding why a rule triggered or how to fix a finding.
+
+## Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | `string` | Rule ID (case-insensitive, whitespace trimmed) |
+| `opts` | `...Option` | Functional options (only `WithCustomRules()` applies) |
+
+## Return Values
+
+| Type | Description |
+|------|-------------|
+| `*RuleDetail` | Detailed rule information |
+| `error` | Non-nil if rule not found or loading fails |
+
+## Type Definition
+
+```go
+type RuleDetail struct {
+    ID             string   `json:"id"`
+    Name           string   `json:"name"`
+    Severity       string   `json:"severity"`
+    Category       string   `json:"category"`
+    Description    string   `json:"description"`
+    Remediation    string   `json:"remediation,omitempty"`
+    Patterns       []string `json:"patterns"`         // "[regex] ..." or "[contains] ..."
+    TruePositives  []string `json:"true_positives"`   // Examples that should trigger
+    FalsePositives []string `json:"false_positives"`  // Examples that should not trigger
+}
+```
+
+## Examples
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/garagon/aguara"
+)
+
+func main() {
+    detail, err := aguara.ExplainRule("PROMPT_INJECTION_001")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Rule: %s\n", detail.Name)
+    fmt.Printf("Severity: %s\n", detail.Severity)
+    fmt.Printf("Category: %s\n", detail.Category)
+    fmt.Printf("\nDescription:\n%s\n", detail.Description)
+    
+    if detail.Remediation != "" {
+        fmt.Printf("\nRemediation:\n%s\n", detail.Remediation)
+    }
+}
+```
+
+### View Detection Patterns
+
+```go
+detail, err := aguara.ExplainRule("PROMPT_INJECTION_001")
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("Detection patterns:")
+for i, pattern := range detail.Patterns {
+    fmt.Printf("  %d. %s\n", i+1, pattern)
+}
+```
+
+### View Examples
+
+```go
+detail, err := aguara.ExplainRule("EXFIL_005")
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("True positives (should trigger):")
+for _, ex := range detail.TruePositives {
+    fmt.Printf("  - %s\n", ex)
+}
+
+fmt.Println("\nFalse positives (should NOT trigger):")
+for _, ex := range detail.FalsePositives {
+    fmt.Printf("  - %s\n", ex)
+}
+```
+
+### Case-Insensitive Lookup
+
+```go
+// All of these work:
+detail, _ := aguara.ExplainRule("PROMPT_INJECTION_001")
+detail, _ = aguara.ExplainRule("prompt_injection_001")
+detail, _ = aguara.ExplainRule("  PROMPT_INJECTION_001  ") // whitespace trimmed
+```
+
+### Error Handling
+
+```go
+detail, err := aguara.ExplainRule("INVALID_RULE_999")
+if err != nil {
+    // Error message: rule "INVALID_RULE_999" not found
+    fmt.Printf("Rule not found: %v\n", err)
+    return
+}
+```
+
+### Export Rule Details to JSON
+
+```go
+import (
+    "encoding/json"
+    "os"
+)
+
+func exportRule(ruleID string, outputPath string) error {
+    detail, err := aguara.ExplainRule(ruleID)
+    if err != nil {
+        return err
+    }
+    
+    f, err := os.Create(outputPath)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    
+    enc := json.NewEncoder(f)
+    enc.SetIndent("", "  ")
+    return enc.Encode(detail)
+}
+```
+
+### Explain Finding's Rule
+
+```go
+import "context"
+
+// Scan and explain each finding's rule
+func analyzeFindings(path string) error {
+    ctx := context.Background()
+    result, err := aguara.Scan(ctx, path)
+    if err != nil {
+        return err
+    }
+    
+    for _, f := range result.Findings {
+        fmt.Printf("\n[%s] %s at %s:%d\n",
+            f.RuleID, f.RuleName, f.FilePath, f.Line)
+        
+        detail, err := aguara.ExplainRule(f.RuleID)
+        if err != nil {
+            fmt.Printf("  Error explaining rule: %v\n", err)
+            continue
+        }
+        
+        fmt.Printf("  Description: %s\n", detail.Description)
+        if detail.Remediation != "" {
+            fmt.Printf("  Remediation: %s\n", detail.Remediation)
+        }
+    }
+    
+    return nil
+}
+```
+
+### Generate Rule Documentation
+
+```go
+import "strings"
+
+func generateRuleDoc(ruleID string) (string, error) {
+    detail, err := aguara.ExplainRule(ruleID)
+    if err != nil {
+        return "", err
+    }
+    
+    var doc strings.Builder
+    
+    doc.WriteString(fmt.Sprintf("# %s\n\n", detail.Name))
+    doc.WriteString(fmt.Sprintf("**ID**: %s  \n", detail.ID))
+    doc.WriteString(fmt.Sprintf("**Severity**: %s  \n", detail.Severity))
+    doc.WriteString(fmt.Sprintf("**Category**: %s  \n\n", detail.Category))
+    
+    doc.WriteString(fmt.Sprintf("## Description\n\n%s\n\n", detail.Description))
+    
+    if detail.Remediation != "" {
+        doc.WriteString(fmt.Sprintf("## Remediation\n\n%s\n\n", detail.Remediation))
+    }
+    
+    doc.WriteString("## Detection Patterns\n\n")
+    for _, p := range detail.Patterns {
+        doc.WriteString(fmt.Sprintf("- `%s`\n", p))
+    }
+    
+    if len(detail.TruePositives) > 0 {
+        doc.WriteString("\n## Examples (True Positives)\n\n")
+        for _, ex := range detail.TruePositives {
+            doc.WriteString(fmt.Sprintf("```\n%s\n```\n\n", ex))
+        }
+    }
+    
+    if len(detail.FalsePositives) > 0 {
+        doc.WriteString("## Examples (False Positives)\n\n")
+        for _, ex := range detail.FalsePositives {
+            doc.WriteString(fmt.Sprintf("```\n%s\n```\n\n", ex))
+        }
+    }
+    
+    return doc.String(), nil
+}
+```
+
+### Interactive Rule Explorer
+
+```go
+import (
+    "bufio"
+    "fmt"
+    "os"
+    "strings"
+)
+
+func exploreRules() {
+    scanner := bufio.NewScanner(os.Stdin)
+    
+    for {
+        fmt.Print("\nEnter rule ID (or 'quit'): ")
+        if !scanner.Scan() {
+            break
+        }
+        
+        input := strings.TrimSpace(scanner.Text())
+        if input == "quit" || input == "q" {
+            break
+        }
+        
+        detail, err := aguara.ExplainRule(input)
+        if err != nil {
+            fmt.Printf("Error: %v\n", err)
+            continue
+        }
+        
+        fmt.Printf("\n%s (%s)\n", detail.Name, detail.ID)
+        fmt.Printf("Severity: %s | Category: %s\n", detail.Severity, detail.Category)
+        fmt.Printf("\n%s\n", detail.Description)
+        
+        if detail.Remediation != "" {
+            fmt.Printf("\nRemediation:\n%s\n", detail.Remediation)
+        }
+    }
+}
+```
+
+### Export All Rule Details
+
+```go
+func exportAllRules(outputDir string) error {
+    rules := aguara.ListRules()
+    
+    for _, r := range rules {
+        detail, err := aguara.ExplainRule(r.ID)
+        if err != nil {
+            fmt.Printf("Skipping %s: %v\n", r.ID, err)
+            continue
+        }
+        
+        filename := filepath.Join(outputDir, r.ID+".json")
+        if err := exportRule(r.ID, filename); err != nil {
+            return err
+        }
+    }
+    
+    return nil
+}
+```
+
+## Pattern Format
+
+Patterns are returned with type prefixes:
+
+- `[regex] (?i)ignore.*previous.*instruction` - Case-insensitive regex
+- `[contains] curl | sh` - Exact substring match
+
+## Custom Rules
+
+To explain custom rules, load them first:
+
+```go
+detail, err := aguara.ExplainRule("CUSTOM_RULE_001",
+    aguara.WithCustomRules("./custom-rules/"),
+)
+```
+
+## Performance Notes
+
+- Rules are loaded and compiled on each call
+- Typical execution time: < 5ms
+- For repeated lookups, consider caching rule details
+
+## Related
+
+- [ListRules()](/api/list-rules) - Get all available rules
+- [WithCustomRules()](/api/options#withcustomrules) - Load custom rules
+- [Finding](/api/types#finding) - Finding type includes RuleID

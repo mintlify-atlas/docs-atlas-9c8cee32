@@ -1,0 +1,331 @@
+---
+title: 'Changelog'
+description: 'Notable changes and releases for Aguara'
+---
+
+All notable changes to Aguara are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [0.7.0] — March 5, 2026
+
+Remediation guidance on all 173 rules, Docker distribution, Homebrew tap, inline ignore comments, and 80% test coverage.
+
+### Added
+
+#### Remediation Guidance — 173/173 Rules
+
+Every detection rule now includes a `remediation` field with actionable fix guidance. Shown in `--verbose` terminal output, JSON, and SARIF.
+
+```json
+{
+  "rule_id": "PROMPT_INJECTION_001",
+  "remediation": "Remove instruction override text. If this is documentation, wrap it in a code block."
+}
+```
+
+#### Docker Distribution
+
+- Multi-stage Dockerfile (golang:1.25-alpine → alpine:3.21)
+- GHCR publish workflow: `ghcr.io/garagon/aguara` with semver tags
+- Run directly without installation:
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+```
+
+#### Homebrew Tap
+
+MacOS and Linux users can now install via Homebrew:
+
+```bash
+brew install garagon/tap/aguara
+```
+
+Auto-updated by GoReleaser on every release via `garagon/homebrew-tap`.
+
+#### Inline Ignore Comments
+
+Suppress findings directly in source files:
+
+| Directive | Effect |
+|-----------|--------|
+| `# aguara-ignore RULE_ID` | Suppress on same line |
+| `# aguara-ignore-next-line RULE_ID` | Suppress on next line |
+| `# aguara-ignore` | Suppress all rules on same line |
+| `<!-- aguara-ignore RULE_ID -->` | HTML/Markdown variant |
+| `// aguara-ignore RULE_ID` | C-style variant |
+
+#### GitHub Action for CI Scanning
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    path: ./mcp-server/
+    severity: medium
+    fail-on: high
+```
+
+Scans repository, uploads SARIF to GitHub Code Scanning, optionally fails build.
+
+#### Config Shorthand
+
+New `.aguara.yml` field for simpler rule disabling:
+
+```yaml
+disable_rules:
+  - CRED_004
+  - EXFIL_005
+```
+
+#### Pattern Matcher Deduplication
+
+Findings are now deduplicated by line within `match_mode: any` rules — multiple patterns matching the same line produce a single finding.
+
+### Improved
+
+- **Test coverage**: 76.3% → 80.0% global (NLP 69.1% → 93.2%, cmd 57.9% → 63.2%)
+- **447 test functions** across 28 test files
+- **NLP and scanner E2E benchmarks** added
+- **README**: new "How It Works" section, output formats table, Docker/CI docs
+
+### Fixed
+
+- **Regex pattern length limit**: Patterns exceeding 4096 chars rejected at compile time
+- **Community docs**: Improved CODE_OF_CONDUCT.md and PR template
+
+### Summary
+
+**173 YAML rules + 4 dynamic** across 13 categories. 6 distribution channels. 80% test coverage. 447 tests. 0 lint issues.
+
+---
+
+## [0.5.0] — March 3, 2026
+
+153 → **173 rules**, new confidence scoring system, configurable file-size limits, and security hardening improvements.
+
+### Added
+
+#### 20 New Detection Rules
+
+**Indirect Injection** (+4 rules, 6 → 10)
+
+- INDIRECT_011: Database/cache query driving agent behavior (HIGH)
+- INDIRECT_012: Webhook/callback registration with external service (HIGH)
+- INDIRECT_013: Git clone and execute fetched code (HIGH)
+- INDIRECT_014: Environment variable injection from external source (MEDIUM)
+
+**Third-Party Content** (+5 rules, 5 → 10)
+
+- THIRDPARTY_003: JavaScript eval/Function with external data (HIGH)
+- THIRDPARTY_007: Unsafe deserialization from untrusted source (HIGH)
+- THIRDPARTY_008: Script/asset without integrity check (MEDIUM)
+- THIRDPARTY_009: HTTP downgrade from HTTPS (MEDIUM)
+- THIRDPARTY_010: Unsigned plugin/extension loading (HIGH)
+
+**Unicode Attack** (+3 rules, 7 → 10)
+
+- UNI_008: Zero-width character sequences (MEDIUM)
+- UNI_009: Unicode normalization inconsistency (MEDIUM)
+- UNI_010: Mixed-script confusable in identifiers (MEDIUM)
+
+**MCP Config** (+2 rules, 9 → 11)
+
+- MCPCFG_010: Docker capabilities escalation (`--cap-add`) (HIGH)
+- MCPCFG_011: Unrestricted container network access (`--network host`) (MEDIUM)
+
+**MCP Attack** (+2 rules, 14 → 16)
+
+- MCP_015: Auth-before-body parsing (slow-body DoS) (MEDIUM)
+- MCP_016: Canonicalization bypass (double-encoding) (HIGH)
+
+**Supply Chain** (+2 rules, 16 → 18)
+
+- SUPPLY_017: Symlink/hardlink to sensitive path outside workspace (HIGH)
+- SUPPLY_018: Sandbox escape via process spawn (CRITICAL)
+
+**Additional Rules** (+2)
+
+- PROMPT_INJECTION_018: Runtime events as user-role prompt (HIGH)
+- CREDLEAK_019: HMAC/signing secret in source (HIGH)
+
+#### Confidence Scoring System
+
+New `Confidence` field (0.0–1.0) on every finding:
+
+- **Base confidence by analyzer**: Pattern `match_mode=all` → 0.95, pattern `match_mode=any` → 0.85, decoded content → 0.90, NLP → 0.70, ToxicFlow → 0.90, Rug-Pull → 0.95
+- **Post-processing adjustments**: Code block matches → ×0.6 downgrade; correlated findings → ×1.1 boost (capped at 1.0)
+- **Output**: `confidence` field in JSON/SARIF; `[85%]` badge in `--verbose` terminal mode; SARIF `rank` property
+
+#### Configurable Max File Size
+
+- New `--max-file-size` CLI flag (e.g. `--max-file-size 100MB`)
+- Range: 1 MB–500 MB, default 50 MB
+- New `max_file_size` field in `.aguara.yml` config
+- New `WithMaxFileSize(bytes)` library option
+
+### Fixed
+
+- **Atomic state file writes**: State persistence (`~/.aguara/state.json`) now uses tmp+rename pattern to prevent corruption
+
+### Summary
+
+**177 total rules** (173 YAML + 4 dynamic) across 13 categories.
+
+| Category | Rules | Severity Breakdown |
+|----------|-------|--------------------|
+| credential-leak | 20 | 7 CRITICAL, 8 HIGH, 4 MEDIUM, 1 LOW |
+| prompt-injection | 18 | 4 CRITICAL, 9 HIGH, 5 MEDIUM |
+| supply-chain | 18 | 2 CRITICAL, 10 HIGH, 6 MEDIUM |
+| external-download | 17 | 3 CRITICAL, 2 HIGH, 5 MEDIUM, 7 LOW |
+| command-execution | 16 | 6 HIGH, 7 MEDIUM, 3 LOW |
+| exfiltration | 16 | 10 HIGH, 6 MEDIUM |
+| mcp-attack | 16 | 3 CRITICAL, 10 HIGH, 3 MEDIUM |
+| mcp-config | 11 | 5 HIGH, 3 MEDIUM, 3 LOW |
+| ssrf-cloud | 11 | 3 CRITICAL, 7 HIGH, 1 MEDIUM |
+| indirect-injection | 10 | 7 HIGH, 2 MEDIUM, 1 LOW |
+| third-party-content | 10 | 5 HIGH, 2 MEDIUM, 3 LOW |
+| unicode-attack | 10 | 3 HIGH, 7 MEDIUM |
+
+---
+
+## [0.4.0] — February 28, 2026
+
+### Added
+
+- **5 new detection rules** from OpenClaw security analysis:
+  - CREDLEAK_018: Hardcoded credentials in environment mappings (MEDIUM)
+  - MCPATTACK_012: MCP tool name shadowing / override attack (HIGH)
+  - MCPATTACK_013: Permissive MCP tool auto-approval patterns (HIGH)
+  - SSRF_009: SSRF via server-controlled redirect following (HIGH)
+  - SUPPLY_015: Executable download disguised as data file (HIGH)
+- **Install script** (`install.sh`): `curl | bash` installer for binary distribution
+- **PATH hint**: One-time hint after `go install` when `~/go/bin` is not in PATH
+
+### Fixed
+
+- **Security hardening**: File-size guardrails (10 MB limit), symlink protection, stricter input validation
+- `.gitignore`: Added `sandbox/` and `coverage.out`
+
+### Summary
+
+**153 total rules** (149 YAML + 4 dynamic) across 13 categories.
+
+---
+
+## [0.2.3] — February 23, 2026
+
+### Added
+
+- **`exclude_patterns` for rules**: Rules can now define patterns that cancel a match when the matched line (or up to 3 lines before it) matches an exclude pattern
+- Applied `exclude_patterns` to 4 high-FP rules: EXTDL_004, EXTDL_009, EXTDL_011, CMDEXEC_009
+
+### Changed
+
+- Documented `exclude_patterns` in README and AGENTS.md custom rules schema
+
+---
+
+## [0.2.2] — February 21, 2026
+
+### Changed
+
+- Reduced cyclomatic complexity across multiple packages (`gocyclo` clean)
+- Applied `gofmt -s` simplifications project-wide
+
+---
+
+## [0.2.1] — February 21, 2026
+
+### Added
+
+**Public Go API** for embedding Aguara as a library:
+
+```go
+import "github.com/garagon/aguara"
+
+// Scan a directory
+result, err := aguara.Scan(ctx, "./skills/")
+
+// Scan inline content (no disk I/O)
+result, err := aguara.ScanContent(ctx, content, "skill.md")
+
+// List detection rules
+rules := aguara.ListRules()
+
+// Explain a rule by ID
+detail, err := aguara.ExplainRule("PROMPT_INJECTION_001")
+```
+
+Options: `WithMinSeverity`, `WithDisabledRules`, `WithCustomRules`, `WithWorkers`, `WithRuleOverrides`, `WithIgnorePatterns`, `WithCategory`.
+
+---
+
+## [0.2.0] — February 18, 2026
+
+Major expansion: 85 → **138 rules** across 12 YAML files, 2 → **5 analyzers**, 7 new rule categories.
+
+### Added
+
+#### New Rule Categories
+
+- **Command Execution** (13 rules): Shell subprocess, eval, Python/Node.js execution, PowerShell
+- **Indirect Injection** (7 rules): Fetch-and-follow, remote config, email-as-instructions
+- **Third-Party Content** (4 rules): Unpinned URLs, mutable GitHub content, unvalidated API responses
+- **MCP Config Security** (8 rules): Unpinned npx, hardcoded secrets, shell metacharacters
+
+#### Expanded Rule Files
+
+- **credential-leak.yaml** (+6 rules): Stripe/Anthropic API keys, SSH private keys, Docker credentials
+- **exfiltration.yaml** (+4 rules): Sensitive file reads, env var leaks, screenshot capture
+- **external-download.yaml** (+8 rules): pip/go/brew/apt installs, curl-to-shell, Docker pull+run
+- **supply-chain.yaml** (+3 rules): Git clone-and-execute, unpinned GitHub Actions
+
+#### New Analyzers
+
+**Rug Pull Detection** (`--monitor` flag)
+
+- Tracks file content SHA-256 hashes across scan runs
+- Detects tool description changes (rug-pull attacks)
+- Persistent state at `~/.aguara/state.json`
+- Rule: RUGPULL_001 (CRITICAL)
+
+**Toxic Flow Analysis** (always-on)
+
+- Detects dangerous capability combinations
+- TOXIC_001: Private data read + public output (HIGH)
+- TOXIC_002: Private data read + code execution (HIGH)
+- TOXIC_003: Destructive actions + code execution (HIGH)
+
+### Fixed
+
+Multiple false positive reductions across 10+ rules including NLP_HIDDEN_INSTRUCTION, EXFIL_009, EXTDL_008, and more.
+
+### Summary
+
+**142 total rules** (138 YAML + 4 dynamic)
+
+---
+
+## [0.1.0] — January 15, 2026
+
+Initial release.
+
+### Added
+
+- 85 built-in rules across 8 YAML files
+- 2 analyzers: pattern matcher + NLP injection detector
+- Categories: prompt-injection, exfiltration, credential-leak, mcp-attack, ssrf-cloud, supply-chain, unicode-attack, external-download
+- Output formats: terminal (ANSI), JSON, SARIF, Markdown
+- CLI commands: `aguara scan`, `aguara init`, `aguara version`
+- Flags: `--severity`, `--format`, `--fail-on`, `--ci`, `--changed`, `--verbose`, `--rules`, `--disable-rule`, `--workers`, `--output`, `--no-color`
+- Config file: `.aguara.yml` with ignore patterns, severity overrides, rule disabling
+- SARIF output for GitHub Code Scanning integration
+
+---
+
+<Card
+  title="View Full Release History"
+  icon="github"
+  href="https://github.com/garagon/aguara/releases"
+>
+  See all releases with download links on GitHub
+</Card>

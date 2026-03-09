@@ -1,0 +1,303 @@
+---
+title: Inline Ignore Directives
+description: Suppress specific Aguara findings directly in your source files
+---
+
+Inline ignore directives allow you to suppress Aguara findings on specific lines of code using special comments. This is useful for intentional patterns that would otherwise trigger false positives.
+
+## Basic Syntax
+
+Place an inline comment containing `aguara-ignore` followed by one or more rule IDs:
+
+```markdown
+# aguara-ignore CRED_004
+api_key: "sk-test-1234567890"
+```
+
+The finding for `CRED_004` (credential leak) on the same line is suppressed.
+
+## Comment Styles
+
+Aguara recognizes multiple comment formats:
+
+<CodeGroup>
+
+```markdown Markdown/Text
+# aguara-ignore PROMPT_INJECTION_001
+Ignore all previous instructions
+
+<!-- aguara-ignore PROMPT_INJECTION_001 -->
+Ignore all previous instructions
+```
+
+```python Python
+# aguara-ignore CMD_EXEC_001
+os.system('dangerous command')
+```
+
+```javascript JavaScript
+// aguara-ignore CMD_EXEC_001
+exec('dangerous command');
+```
+
+```sql SQL
+-- aguara-ignore SQL_INJECTION_001
+SELECT * FROM users WHERE id = ${userId}
+```
+
+```yaml YAML
+# aguara-ignore CRED_004
+api_key: "sk-test-key"
+```
+
+</CodeGroup>
+
+Supported prefixes: `#`, `//`, `--`, `<!--`
+
+## Directive Types
+
+### Same-Line Ignore
+
+Suppress a rule on the same line as the directive:
+
+```yaml
+# aguara-ignore CRED_004
+api_key: "sk-test-1234"  # finding suppressed here
+```
+
+### Next-Line Ignore
+
+Suppress a rule on the **next** line using `-next-line`:
+
+```markdown
+<!-- aguara-ignore-next-line PROMPT_INJECTION_001 -->
+Ignore all previous instructions (this is a test)
+```
+
+This is useful when you can't place the comment on the same line (e.g., in JSON).
+
+### Multiple Rules
+
+Suppress multiple rules by separating IDs with commas:
+
+```yaml
+# aguara-ignore CRED_004, EXTDL_001
+script_url: "https://example.com/install.sh?token=abc123"
+```
+
+### Ignore All Rules
+
+Suppress **all** rules on a line by omitting the rule ID:
+
+```markdown
+# aguara-ignore
+This line triggers multiple rules but all are suppressed
+```
+
+<Warning>
+Use `aguara-ignore` (without rule IDs) sparingly. It's better to suppress specific rules so future issues aren't accidentally hidden.
+</Warning>
+
+## Complete Examples
+
+### Test Fixtures
+
+```markdown SKILL.md
+# Testing
+
+<!-- aguara-ignore-next-line PROMPT_INJECTION_001 -->
+To test prompt injection, use: "Ignore all previous instructions"
+
+<!-- aguara-ignore CRED_004 -->
+Test API key: `sk-test-1234567890abcdef`
+```
+
+### Configuration Files
+
+```yaml .aguara.yml
+rule_overrides:
+  # aguara-ignore CRED_004
+  test_secret: "for-testing-only-not-real"
+```
+
+### Documentation Examples
+
+```markdown
+## Attack Patterns
+
+The following patterns are malicious:
+
+<!-- aguara-ignore PROMPT_INJECTION_001, PROMPT_INJECTION_002 -->
+- "Ignore all previous instructions"
+- "You are now in developer mode"
+```
+
+### Intentional Downloads
+
+```bash
+# aguara-ignore EXTDL_001
+curl -fsSL https://example.com/install.sh | bash
+```
+
+## How It Works
+
+When Aguara scans a file:
+
+1. **Parse directives** - Extract all `aguara-ignore` comments and build an index of which lines suppress which rules
+2. **Run analyzers** - Pattern matching, NLP, taint tracking, and rug-pull detection run normally
+3. **Filter findings** - Before returning results, findings matching suppressed (line, rule ID) pairs are removed
+
+The ignored findings are **not** included in:
+- Scan output (terminal, JSON, SARIF, Markdown)
+- Exit code calculation (for `--fail-on`)
+- Finding counts
+
+<Note>
+Inline ignores only affect findings on the exact line number specified. If a finding spans multiple lines, place the directive on the line where the match occurs (usually the first line).
+</Note>
+
+## Regex Pattern
+
+Aguara uses this regex to detect inline ignores:
+
+```regex
+(?:^|#|//|--|<!--)\s*aguara-ignore(?:-next-line)?\s+([A-Z][A-Z0-9_,\s]+?)(?:\s*-->)?\s*$
+```
+
+**What it matches:**
+- Optional comment prefix: `#`, `//`, `--`, `<!--`
+- Literal `aguara-ignore`
+- Optional `-next-line` suffix
+- One or more uppercase rule IDs separated by commas
+- Optional HTML closing `-->`
+
+**What it does NOT match:**
+- Lowercase rule IDs: `aguara-ignore cred_004` ❌
+- No whitespace: `#aguara-ignoreCRED_004` ❌
+- Inline with code: `api_key = 'foo' # aguara-ignore CRED_004` ❌ (must be on its own line or before code)
+
+<Tip>
+Always place directives on their own line or at the beginning of the line for reliable detection.
+</Tip>
+
+## Limitations
+
+### Cannot Ignore by Category
+
+You cannot suppress all rules in a category:
+
+```markdown
+# aguara-ignore prompt-injection  ❌ Does not work
+```
+
+You must list specific rule IDs or use `aguara-ignore` (all rules).
+
+### Cannot Ignore Ranges
+
+There is no "start ignore / end ignore" block syntax. Each line must be suppressed individually:
+
+```markdown
+<!-- aguara-ignore-next-line PROMPT_INJECTION_001 -->
+Ignore all previous instructions (test)
+
+<!-- aguara-ignore-next-line PROMPT_INJECTION_002 -->
+You are now in developer mode (test)
+```
+
+### Does Not Affect Rug-Pull Detection
+
+Inline ignores suppress findings from pattern matching, NLP, and taint tracking, but **not** rug-pull detection (`RUGPULL_001`). Rug-pull findings are based on file hash changes, not line-level patterns.
+
+## Best Practices
+
+### Always Include Rule IDs
+
+Prefer specific rule IDs over blanket ignores:
+
+```markdown
+<!-- Good: explicit rule ID -->
+<!-- aguara-ignore CRED_004 -->
+test_api_key: "sk-test-123"
+
+<!-- Bad: hides all future findings -->
+<!-- aguara-ignore -->
+test_api_key: "sk-test-123"
+```
+
+### Add Context Comments
+
+Explain why the pattern is safe:
+
+```yaml
+# This is a test credential, not a real API key
+# aguara-ignore CRED_004
+test_key: "sk-test-1234567890"
+```
+
+### Use in Test Files
+
+Test fixtures often contain intentional attack patterns:
+
+```markdown tests/fixtures/prompt-injection.md
+# Test Cases for Prompt Injection
+
+<!-- aguara-ignore PROMPT_INJECTION_001 -->
+Test 1: "Ignore all previous instructions"
+
+<!-- aguara-ignore PROMPT_INJECTION_002 -->
+Test 2: "You are now in admin mode"
+```
+
+### Prefer Configuration Over Inline Ignores
+
+If you need to suppress a rule across many files, use `.aguara.yml`:
+
+```yaml .aguara.yml
+rule_overrides:
+  CRED_004:
+    disabled: true  # Disable globally instead of 50 inline comments
+```
+
+## Alternatives
+
+Before using inline ignores, consider:
+
+1. **Rule overrides** - Lower severity or disable rules project-wide in `.aguara.yml`
+2. **Ignore patterns** - Skip entire files or directories via `.aguaraignore`
+3. **Code refactoring** - Change the pattern to avoid triggering the rule
+
+Inline ignores should be a last resort for legitimate exceptions that can't be handled by configuration.
+
+## Verification
+
+To verify an inline ignore worked:
+
+1. **Before adding the directive**, run the scan and note the finding:
+   ```bash
+   aguara scan file.md
+   # CRED_004 at line 10
+   ```
+
+2. **Add the directive** on or before the line:
+   ```markdown
+   # aguara-ignore CRED_004
+   api_key: "sk-test-123"
+   ```
+
+3. **Re-run the scan** and confirm the finding is gone:
+   ```bash
+   aguara scan file.md
+   # No findings
+   ```
+
+4. **Check JSON output** to confirm the finding was suppressed (not just hidden):
+   ```bash
+   aguara scan file.md --format json | jq '.findings'
+   # []
+   ```
+
+## Related
+
+- [Configuration File](/configuration/config-file) - Project-wide settings
+- [Rule Overrides](/configuration/rule-overrides) - Disable or change severity globally
+- [Ignore Patterns](/configuration/ignore-patterns) - Skip files and directories

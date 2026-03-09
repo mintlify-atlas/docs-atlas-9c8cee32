@@ -1,0 +1,372 @@
+---
+title: Incremental Scanning
+description: Scan only git-modified files for faster feedback in development and CI
+---
+
+Incremental scanning with the `--changed` flag scans only files that have been modified, staged, or added in your git repository. This dramatically speeds up scans in development workflows and CI pipelines.
+
+## Quick Start
+
+Scan only git-changed files:
+
+```bash
+aguara scan --changed .
+```
+
+Aguara scans:
+
+- **Staged files**: Changes added with `git add`
+- **Unstaged files**: Modified but not yet staged
+- **Untracked files**: New files not yet committed
+
+## How It Works
+
+### Git Integration
+
+Aguara runs these git commands to detect changes:
+
+```bash
+# 1. Check if git is available
+which git
+
+# 2. Check if we're in a git repo
+git rev-parse --git-dir
+
+# 3. Get tracked changes (staged + unstaged)
+git diff --name-only HEAD
+
+# 4. Get untracked files
+git ls-files --others --exclude-standard
+```
+
+All files from steps 3 and 4 are scanned.
+
+### Fallback for New Repos
+
+In repositories with no commits yet (e.g., `git init` but no `git commit`):
+
+```bash
+# Falls back to staged files only
+git diff --name-only --cached
+```
+
+### No Git? No Problem
+
+If git is not installed or the directory is not a git repository:
+
+- `--changed` is silently ignored
+- Aguara scans all files (standard behavior)
+- No error is thrown
+
+## Use Cases
+
+### 1. Pre-Commit Hook
+
+Scan only changed files before committing:
+
+```bash
+# .git/hooks/pre-commit
+#!/bin/bash
+aguara scan --changed --fail-on high --no-color
+```
+
+Generate this hook automatically:
+
+```bash
+aguara init --hook
+```
+
+### 2. Pull Request CI
+
+Scan only files modified in a PR:
+
+```yaml
+# .github/workflows/pr-check.yml
+name: Security Scan (Changed Files)
+
+on:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for git diff
+
+      - name: Scan changed files
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+          aguara scan --changed --ci
+```
+
+### 3. Development Workflow
+
+While editing skills or MCP servers, get instant feedback:
+
+```bash
+# Edit files...
+vim skills/deploy.md
+
+# Quick scan
+aguara scan --changed --verbose
+```
+
+Only scans `skills/deploy.md` (and any other modified files).
+
+### 4. Monorepo Optimization
+
+In large repos with hundreds of skills:
+
+```bash
+# Full scan (slow)
+aguara scan .  # 30s for 500 files
+
+# Incremental scan (fast)
+aguara scan --changed .  # 1s for 5 changed files
+```
+
+## Combining with Other Flags
+
+### With `--monitor`
+
+Scan changed files AND track hashes for rug-pull detection:
+
+```bash
+aguara scan --changed --monitor .
+```
+
+This:
+
+- Scans only git-modified files (faster)
+- Updates hashes in state file for those files
+- Detects rug-pull attacks on next scan
+
+### With `--severity`
+
+Filter findings by severity:
+
+```bash
+aguara scan --changed --severity high
+```
+
+Only reports HIGH and CRITICAL findings from changed files.
+
+### With `--fail-on`
+
+Exit with code 1 if changed files have high-severity issues:
+
+```bash
+aguara scan --changed --fail-on high
+```
+
+Perfect for CI gates.
+
+### With `--ci`
+
+Combines `--fail-on high` and `--no-color`:
+
+```bash
+aguara scan --changed --ci
+```
+
+Equivalent to:
+
+```bash
+aguara scan --changed --fail-on high --no-color
+```
+
+## Git-Changed File Detection
+
+### Staged Files
+
+Files added with `git add`:
+
+```bash
+git add skills/new-skill.md
+aguara scan --changed .
+# Scans: skills/new-skill.md
+```
+
+### Unstaged Files
+
+Modified but not staged:
+
+```bash
+vim skills/deploy.md  # make changes
+aguara scan --changed .
+# Scans: skills/deploy.md
+```
+
+### Untracked Files
+
+New files not yet added:
+
+```bash
+touch skills/experimental.md
+aguara scan --changed .
+# Scans: skills/experimental.md
+```
+
+### Deleted Files
+
+Deleted files are **not scanned** (nothing to analyze).
+
+### Renamed Files
+
+Git tracks renames as delete + add. Aguara scans the new path:
+
+```bash
+git mv old.md new.md
+aguara scan --changed .
+# Scans: new.md
+```
+
+## Performance
+
+### Benchmark (500-file repo)
+
+| Scan Type | Files Scanned | Duration |
+|-----------|--------------|----------|
+| Full scan | 500 | 28s |
+| `--changed` (5 files) | 5 | 0.8s |
+| `--changed` (50 files) | 50 | 4.2s |
+
+**35x faster** for typical PR workflows (5-10 changed files).
+
+### Overhead
+
+Git command execution adds ~50ms overhead:
+
+```bash
+time git diff --name-only HEAD
+# 0.05s
+```
+
+Negligible compared to scan time.
+
+## Limitations
+
+### 1. Requires Git
+
+If git is not installed or the directory is not a git repo, `--changed` has no effect (all files are scanned).
+
+### 2. Branch Context
+
+`--changed` compares against `HEAD` (current commit). To compare against a specific branch:
+
+```bash
+# Not supported directly; use git worktree or custom script
+git diff --name-only main...HEAD | xargs -I{} aguara scan {}
+```
+
+### 3. Submodules
+
+Git submodule changes are detected if the submodule pointer changed, but files **inside** submodules are not scanned unless you run Aguara inside the submodule directory.
+
+### 4. Ignored Files
+
+Files matching `.aguaraignore` or `.gitignore` are skipped even if changed.
+
+## Best Practices
+
+### 1. Use in Development
+
+Enable `--changed` in your daily workflow for instant feedback:
+
+```bash
+alias ascan='aguara scan --changed --verbose'
+```
+
+### 2. Full Scan in Merge to Main
+
+Run incremental scans on PRs, but full scans on merge to main:
+
+```yaml
+# .github/workflows/security.yml
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            aguara scan --changed --ci
+          else
+            aguara scan --ci
+          fi
+```
+
+### 3. Combine with Watch Mode (Future)
+
+While not yet supported, you can simulate watch mode with `entr`:
+
+```bash
+git ls-files | entr -c aguara scan --changed /_
+```
+
+Re-runs scan on every file change.
+
+## Comparison with --monitor
+
+| Feature | `--changed` | `--monitor` |
+|---------|-------------|-------------|
+| **Detects** | All issues in git-modified files | Dangerous content in changed files (vs. previous scan) |
+| **Requires** | Git repository | Persistent state file |
+| **Scope** | Git-tracked changes | All files (compares vs. previous scan) |
+| **Persistence** | None (stateless) | Stores hashes in state file |
+| **Use Case** | Fast PR scans, pre-commit hooks | Rug-pull detection, long-term monitoring |
+
+You can combine both:
+
+```bash
+aguara scan --changed --monitor .
+```
+
+This scans only git-changed files **and** tracks their hashes for rug-pull detection.
+
+## Troubleshooting
+
+### "No files scanned" with --changed
+
+If Aguara reports 0 files scanned:
+
+1. Check git status:
+   ```bash
+   git status
+   ```
+2. Ensure files are tracked or untracked (not ignored):
+   ```bash
+   git ls-files --others --exclude-standard
+   ```
+3. Verify you're in a git repository:
+   ```bash
+   git rev-parse --git-dir
+   ```
+
+### --changed not working in CI
+
+Ensure `fetch-depth: 0` in `actions/checkout`:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # fetch full history
+```
+
+Shallow clones (depth=1) don't have enough git history for `git diff HEAD`.
+
+## Related
+
+- [Rug-Pull Detection](/advanced/rug-pull-detection) — Track file changes across scans
+- [Output Formats](/advanced/output-formats) — CI-friendly JSON and SARIF output
+- [MCP Discovery](/advanced/mcp-discovery) — Auto-detect MCP configs to scan

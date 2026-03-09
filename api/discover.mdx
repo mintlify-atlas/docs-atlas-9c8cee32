@@ -1,0 +1,323 @@
+---
+title: "Discover()"
+description: "Find all MCP client configurations on the local machine"
+---
+
+## Function Signature
+
+```go
+func Discover() (*DiscoverResult, error)
+```
+
+**Source**: `aguara.go:49`
+
+## Description
+
+Scans the local machine for MCP (Model Context Protocol) client configurations. This function:
+
+- Searches known config locations for popular MCP clients (Claude Desktop, Continue, Cline, etc.)
+- Extracts server definitions from JSON configuration files
+- Returns a structured result with all discovered clients and servers
+- Does not perform network requests or modify any files
+
+## Parameters
+
+None.
+
+## Return Values
+
+| Type | Description |
+|------|-------------|
+| `*DiscoverResult` | Discovery results containing clients and servers |
+| `error` | Non-nil if filesystem access fails |
+
+## Type Definitions
+
+```go
+type DiscoverResult struct {
+    Clients []DiscoveredClient
+}
+
+type DiscoveredClient struct {
+    ClientName string            // "claude-desktop", "continue", etc.
+    ConfigPath string            // Full path to config file
+    Servers    []DiscoveredServer
+}
+
+type DiscoveredServer struct {
+    Name    string   // Server name from config
+    Command string   // Executable command
+    Args    []string // Command arguments
+    Env     map[string]string // Environment variables
+}
+```
+
+## Examples
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/garagon/aguara"
+)
+
+func main() {
+    result, err := aguara.Discover()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Found %d MCP clients\n", len(result.Clients))
+    
+    for _, client := range result.Clients {
+        fmt.Printf("\n%s (%s)\n", client.ClientName, client.ConfigPath)
+        fmt.Printf("  Servers: %d\n", len(client.Servers))
+    }
+}
+```
+
+### List All Servers
+
+```go
+result, err := aguara.Discover()
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, client := range result.Clients {
+    for _, server := range client.Servers {
+        fmt.Printf("%s/%s: %s %v\n",
+            client.ClientName,
+            server.Name,
+            server.Command,
+            server.Args,
+        )
+    }
+}
+```
+
+### Audit MCP Configurations
+
+```go
+import (
+    "context"
+    "fmt"
+    
+    "github.com/garagon/aguara"
+)
+
+func auditMCPServers() error {
+    // Discover all MCP clients
+    result, err := aguara.Discover()
+    if err != nil {
+        return err
+    }
+    
+    ctx := context.Background()
+    hasIssues := false
+    
+    // Scan each server configuration
+    for _, client := range result.Clients {
+        scanResult, err := aguara.Scan(ctx, client.ConfigPath,
+            aguara.WithMinSeverity(aguara.SeverityMedium),
+        )
+        if err != nil {
+            return err
+        }
+        
+        if len(scanResult.Findings) > 0 {
+            hasIssues = true
+            fmt.Printf("Issues in %s:\n", client.ClientName)
+            for _, f := range scanResult.Findings {
+                fmt.Printf("  [%s] %s\n", f.Severity, f.RuleName)
+            }
+        }
+    }
+    
+    if !hasIssues {
+        fmt.Println("All MCP configurations are secure")
+    }
+    
+    return nil
+}
+```
+
+### Check for Unpinned npx Commands
+
+```go
+result, err := aguara.Discover()
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, client := range result.Clients {
+    for _, server := range client.Servers {
+        if server.Command == "npx" {
+            // Check if package version is pinned
+            hasVersion := false
+            for _, arg := range server.Args {
+                if strings.Contains(arg, "@") {
+                    hasVersion = true
+                    break
+                }
+            }
+            
+            if !hasVersion {
+                fmt.Printf("WARNING: Unpinned npx in %s/%s\n",
+                    client.ClientName, server.Name)
+            }
+        }
+    }
+}
+```
+
+### Extract Environment Variables
+
+```go
+result, err := aguara.Discover()
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, client := range result.Clients {
+    for _, server := range client.Servers {
+        if len(server.Env) > 0 {
+            fmt.Printf("%s/%s environment:\n",
+                client.ClientName, server.Name)
+            for k, v := range server.Env {
+                fmt.Printf("  %s=%s\n", k, v)
+            }
+        }
+    }
+}
+```
+
+### Generate Security Report
+
+```go
+import (
+    "encoding/json"
+    "os"
+)
+
+func generateMCPReport(outputPath string) error {
+    result, err := aguara.Discover()
+    if err != nil {
+        return err
+    }
+    
+    // Create report structure
+    report := map[string]interface{}{
+        "clients": len(result.Clients),
+        "servers": 0,
+        "details": result.Clients,
+    }
+    
+    for _, client := range result.Clients {
+        report["servers"] = report["servers"].(int) + len(client.Servers)
+    }
+    
+    // Write JSON report
+    f, err := os.Create(outputPath)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    
+    enc := json.NewEncoder(f)
+    enc.SetIndent("", "  ")
+    return enc.Encode(report)
+}
+```
+
+### Combined Discovery and Scanning
+
+```go
+func scanAllMCPClients() error {
+    ctx := context.Background()
+    
+    // Discover MCP clients
+    discoverResult, err := aguara.Discover()
+    if err != nil {
+        return err
+    }
+    
+    totalFindings := 0
+    
+    // Scan each client's config file
+    for _, client := range discoverResult.Clients {
+        fmt.Printf("Scanning %s...\n", client.ClientName)
+        
+        scanResult, err := aguara.Scan(ctx, client.ConfigPath,
+            aguara.WithMinSeverity(aguara.SeverityHigh),
+        )
+        if err != nil {
+            fmt.Printf("  Error: %v\n", err)
+            continue
+        }
+        
+        totalFindings += len(scanResult.Findings)
+        
+        for _, f := range scanResult.Findings {
+            fmt.Printf("  [%s] %s at line %d\n",
+                f.Severity, f.RuleName, f.Line)
+        }
+    }
+    
+    fmt.Printf("\nTotal findings: %d\n", totalFindings)
+    return nil
+}
+```
+
+## Supported Clients
+
+Aguara searches for configurations from these MCP clients:
+
+- **Claude Desktop** (macOS, Windows, Linux)
+- **Continue** (VSCode extension)
+- **Cline** (VSCode extension)
+- **Zed**
+- **Other MCP-compatible clients**
+
+## Search Locations
+
+Depending on the platform, Aguara checks:
+
+- `~/Library/Application Support/` (macOS)
+- `%APPDATA%` (Windows)
+- `~/.config/` (Linux)
+- VSCode extension directories
+
+## Error Handling
+
+```go
+result, err := aguara.Discover()
+if err != nil {
+    // Possible errors:
+    // - Permission denied on config directories
+    // - Invalid JSON in config files
+    log.Printf("Discovery failed: %v", err)
+    return
+}
+
+if len(result.Clients) == 0 {
+    fmt.Println("No MCP clients found")
+}
+```
+
+## Performance Notes
+
+- Fast filesystem scan (typically < 100ms)
+- No network requests
+- Reads only known config file locations
+- Does not parse or validate server commands
+
+## Related
+
+- [Scan()](/api/scan) - Scan discovered config files
+- [MCP Config Rules](https://github.com/garagon/aguara#rules) - Detection rules for MCP configurations

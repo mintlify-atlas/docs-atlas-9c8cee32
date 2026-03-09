@@ -1,0 +1,198 @@
+---
+title: MCP Client Auto-Discovery
+description: Auto-detect and scan MCP configurations across 17 supported AI coding assistants
+---
+
+Aguara can automatically discover MCP server configurations across 17 popular AI coding assistants and agent frameworks, making it easy to scan all your MCP servers without manually specifying config paths.
+
+## Supported Clients
+
+Aguara auto-detects MCP configurations from the following clients:
+
+| Client | Config Locations |
+|--------|------------------|
+| **Claude Desktop** | `~/Library/Application Support/Claude/` (macOS)<br/>`~/.config/claude/` (Linux)<br/>`%APPDATA%\Claude\` (Windows) |
+| **Cursor** | `~/.cursor/mcp.json` |
+| **VS Code** | `~/.vscode/mcp.json` |
+| **Cline** | `~/.cline/mcp_settings.json` |
+| **Windsurf** | `~/.windsurf/mcp.json`<br/>`~/.codeium/windsurf/mcp_config.json` |
+| **OpenClaw** | `~/.openclaw/openclaw.json` |
+| **OpenCode** | `~/.config/opencode/opencode.json` |
+| **Zed** | `~/.config/zed/settings.json` |
+| **Amp** | `~/.config/amp/settings.json` |
+| **Gemini CLI** | `~/.gemini/settings.json` |
+| **Copilot CLI** | `~/.copilot/mcp-config.json` |
+| **Amazon Q** | `~/.aws/amazonq/mcp.json` |
+| **Claude Code** | `~/.claude.json` |
+| **Roo Code** | VS Code global storage |
+| **Kilo Code** | VS Code global storage |
+| **BoltAI** | `~/.boltai/mcp.json` (macOS) |
+| **JetBrains** | `~/.junie/mcp/mcp.json` |
+
+## Discovery Commands
+
+### List All MCP Configs
+
+Discover which MCP clients are configured on your system without scanning:
+
+```bash
+aguara discover
+```
+
+Example output:
+
+```
+Found 2 MCP configuration(s):
+
+  Claude Desktop  /Users/you/Library/Application Support/Claude/claude_desktop_config.json
+    ├── filesystem                node /path/to/filesystem-server/index.js
+    └── git                       npx -y @modelcontextprotocol/server-git
+
+  Cursor  /Users/you/.cursor/mcp.json
+    └── web-search                python -m mcp_server_duckduckgo
+
+Total: 3 MCP servers across 2 clients
+```
+
+### JSON Output
+
+Get discovery results as JSON for programmatic use:
+
+```bash
+aguara discover --format json
+```
+
+```json
+{
+  "clients": [
+    {
+      "client": "claude-desktop",
+      "path": "/Users/you/Library/Application Support/Claude/claude_desktop_config.json",
+      "servers": [
+        {
+          "name": "filesystem",
+          "command": "node",
+          "args": ["/path/to/filesystem-server/index.js"],
+          "env": {}
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Auto-Discovery + Scan
+
+Discover all MCP configurations and scan them in one command:
+
+```bash
+aguara scan --auto
+```
+
+This is equivalent to:
+
+1. Running `aguara discover` to find all MCP configs
+2. Extracting the `command`, `args`, and `env` from each server
+3. Scanning all referenced files and scripts
+
+## How It Works
+
+### Config Parsing
+
+Aguara reads MCP client configuration files and extracts server definitions. Most clients use a standard format:
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+**Client-Specific Variations:**
+
+- **VS Code**: Uses `servers` instead of `mcpServers`
+- **Zed**: Uses `context_servers`
+- **OpenCode**: Nested under `mcp.servers`
+- **Claude Code**: Nested under `mcp.mcpServers`
+- **OpenClaw**: Custom TOML-like format in `openclaw.json`
+
+Aguara handles all these variations automatically.
+
+### Path Resolution
+
+For each discovered server, Aguara:
+
+1. Resolves the `command` (e.g., `node`, `python`, `npx`)
+2. Locates the script file from `args` (e.g., `server.js`, `-m module_name`)
+3. Scans the script and any related files for security issues
+4. Checks environment variables for hardcoded credentials
+
+### Security Analysis
+
+When you run `aguara scan --auto`, all discovered servers are analyzed for:
+
+- Hardcoded API keys and secrets in config `env` blocks
+- Unpinned `npx` packages (e.g., `npx -y package` without version)
+- Dangerous command flags (`--allow-all`, `shell=True`)
+- Docker security issues (`--cap-add`, `--privileged`, `--network=host`)
+- Server script vulnerabilities (prompt injection, command execution, exfiltration)
+
+## Use Cases
+
+### Pre-Deployment Audit
+
+Before deploying an MCP server to production, scan all configured servers:
+
+```bash
+aguara scan --auto --severity high --verbose
+```
+
+### CI Integration
+
+Add MCP config scanning to your GitHub Actions workflow:
+
+```yaml
+- name: Scan MCP configurations
+  run: |
+    aguara scan --auto --ci
+```
+
+### Development Workflow
+
+After installing a new MCP server, check for security issues:
+
+```bash
+# Install server
+claude mcp add my-server -- node server.js
+
+# Scan it
+aguara scan --auto
+```
+
+### Multi-Client Monitoring
+
+If you use multiple AI assistants (Claude Desktop + Cursor + VS Code), discover and scan all of them at once:
+
+```bash
+aguara scan --auto --format json -o scan-results.json
+```
+
+## Limitations
+
+- **File System Access**: Discovery requires read access to client config directories
+- **Cross-Platform**: Some clients (like BoltAI) are macOS-only
+- **Custom Locations**: Non-standard config paths won't be auto-detected (use `aguara scan <path>` instead)
+- **Server Code**: Aguara scans local server scripts, but can't analyze remote `npx` packages until they're installed
+
+## Related
+
+- [Rug-Pull Detection](/advanced/rug-pull-detection) — Track config changes across scans
+- [Incremental Scanning](/advanced/incremental-scanning) — Scan only modified files
+- [Output Formats](/advanced/output-formats) — Format discovery results for CI/CD

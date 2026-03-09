@@ -1,0 +1,405 @@
+---
+title: "Options"
+description: "Functional options for configuring scans"
+---
+
+## Overview
+
+Aguara uses the functional options pattern for configuration. All scanning functions accept variadic `Option` parameters:
+
+```go
+type Option func(*scanConfig)
+```
+
+Options can be combined in any order:
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithMinSeverity(aguara.SeverityMedium),
+    aguara.WithWorkers(8),
+    aguara.WithDisabledRules("EXFIL_005"),
+)
+```
+
+## Available Options
+
+### WithCustomRules
+
+**Source**: `options.go:19`
+
+```go
+func WithCustomRules(dir string) Option
+```
+
+Loads additional detection rules from a directory.
+
+**Parameters**:
+- `dir` - Path to directory containing YAML rule files
+
+**Example**:
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithCustomRules("./custom-rules/"),
+)
+```
+
+**Notes**:
+- Custom rules are merged with built-in rules
+- Custom rules can override built-in rules with the same ID
+- Directory is recursively scanned for `.yaml` and `.yml` files
+- Invalid rules emit warnings to stderr but don't fail the scan
+
+---
+
+### WithDisabledRules
+
+**Source**: `options.go:26`
+
+```go
+func WithDisabledRules(ids ...string) Option
+```
+
+Excludes specific rule IDs from scanning.
+
+**Parameters**:
+- `ids` - One or more rule IDs to disable
+
+**Example**:
+
+```go
+// Disable single rule
+aguara.Scan(ctx, path,
+    aguara.WithDisabledRules("EXFIL_005"),
+)
+
+// Disable multiple rules
+aguara.Scan(ctx, path,
+    aguara.WithDisabledRules("EXFIL_005", "CRED_001", "UNICODE_001"),
+)
+```
+
+**Notes**:
+- Rule IDs are case-sensitive
+- Use `aguara.ListRules()` to see all available rule IDs
+- Disabled rules are completely skipped (not loaded into memory)
+
+---
+
+### WithRuleOverrides
+
+**Source**: `options.go:32`
+
+```go
+func WithRuleOverrides(overrides map[string]RuleOverride) Option
+```
+
+Applies severity overrides or disables rules.
+
+**Parameters**:
+- `overrides` - Map of rule ID to override configuration
+
+**Example**:
+
+```go
+aguara.Scan(ctx, path,
+    aguara.WithRuleOverrides(map[string]aguara.RuleOverride{
+        "PROMPT_INJECTION_001": {Severity: "medium"}, // Downgrade from CRITICAL
+        "EXFIL_005":           {Disabled: true},       // Completely disable
+        "UNICODE_001":         {Severity: "critical"}, // Upgrade from HIGH
+    }),
+)
+```
+
+**Override Struct**:
+
+```go
+type RuleOverride struct {
+    Severity string // "critical", "high", "medium", "low", "info"
+    Disabled bool   // If true, rule is disabled
+}
+```
+
+**Notes**:
+- Severity values are case-insensitive
+- Invalid severity values emit warnings to stderr
+- `Disabled: true` takes precedence over `Severity`
+
+---
+
+### WithMinSeverity
+
+**Source**: `options.go:40`
+
+```go
+func WithMinSeverity(sev Severity) Option
+```
+
+Sets the minimum severity threshold for reported findings. Findings below this level are filtered out.
+
+**Parameters**:
+- `sev` - Minimum severity level
+
+**Example**:
+
+```go
+// Only report HIGH and CRITICAL findings
+aguara.Scan(ctx, path,
+    aguara.WithMinSeverity(aguara.SeverityHigh),
+)
+
+// Report all findings (default)
+aguara.Scan(ctx, path,
+    aguara.WithMinSeverity(aguara.SeverityInfo),
+)
+```
+
+**Severity Constants**:
+
+```go
+aguara.SeverityInfo     // 0 - Informational
+aguara.SeverityLow      // 1 - Low severity
+aguara.SeverityMedium   // 2 - Medium severity
+aguara.SeverityHigh     // 3 - High severity
+aguara.SeverityCritical // 4 - Critical severity
+```
+
+---
+
+### WithWorkers
+
+**Source**: `options.go:46`
+
+```go
+func WithWorkers(n int) Option
+```
+
+Sets the number of concurrent workers for parallel file scanning.
+
+**Parameters**:
+- `n` - Number of worker goroutines (default: `runtime.NumCPU()`)
+
+**Example**:
+
+```go
+// Use 8 workers
+aguara.Scan(ctx, path,
+    aguara.WithWorkers(8),
+)
+
+// Single-threaded scanning
+aguara.Scan(ctx, path,
+    aguara.WithWorkers(1),
+)
+```
+
+**Notes**:
+- Higher worker counts improve performance for large directories
+- Diminishing returns beyond `NumCPU * 2`
+- Memory usage scales with worker count (each worker buffers file content)
+
+---
+
+### WithIgnorePatterns
+
+**Source**: `options.go:54`
+
+```go
+func WithIgnorePatterns(patterns []string) Option
+```
+
+Sets file patterns to ignore during directory scanning.
+
+**Parameters**:
+- `patterns` - Slice of gitignore-style patterns
+
+**Example**:
+
+```go
+aguara.Scan(ctx, path,
+    aguara.WithIgnorePatterns([]string{
+        "vendor/",
+        "node_modules/",
+        "*.log",
+        "*.tmp",
+        "test/fixtures/",
+    }),
+)
+```
+
+**Pattern Syntax**:
+
+- `vendor/` - Ignore directory and all contents
+- `*.log` - Ignore all `.log` files
+- `test/*.md` - Ignore `.md` files in `test/` directory
+- `**/temp` - Ignore all `temp` directories (recursive)
+
+**Notes**:
+- Patterns use gitignore-style matching
+- Always ignored: `.git/`, `node_modules/`, `.aguara/`, binary files
+- `.aguaraignore` files are also respected
+
+---
+
+### WithMaxFileSize
+
+**Source**: `options.go:62`
+
+```go
+func WithMaxFileSize(bytes int64) Option
+```
+
+Sets the maximum file size (in bytes) for scanned files. Files larger than this are skipped.
+
+**Parameters**:
+- `bytes` - Maximum file size in bytes (0 = default 50 MB)
+
+**Example**:
+
+```go
+// Only scan files <= 10 MB
+aguara.Scan(ctx, path,
+    aguara.WithMaxFileSize(10 * 1024 * 1024),
+)
+
+// Use default (50 MB)
+aguara.Scan(ctx, path,
+    aguara.WithMaxFileSize(0),
+)
+```
+
+**Notes**:
+- Default limit: 50 MB
+- Prevents memory exhaustion on very large files
+- Skipped files are not counted in `FilesScanned`
+
+---
+
+### WithCategory
+
+**Source**: `options.go:69`
+
+```go
+func WithCategory(cat string) Option
+```
+
+Filters rules by category. **Only applies to `ListRules()`**, not scanning functions.
+
+**Parameters**:
+- `cat` - Rule category (case-insensitive)
+
+**Example**:
+
+```go
+// List only prompt injection rules
+rules := aguara.ListRules(
+    aguara.WithCategory("prompt-injection"),
+)
+
+// List only credential leak rules
+rules := aguara.ListRules(
+    aguara.WithCategory("credential-leak"),
+)
+```
+
+**Available Categories**:
+
+- `prompt-injection`
+- `credential-leak`
+- `exfiltration`
+- `external-download`
+- `supply-chain`
+- `command-execution`
+- `mcp-attack`
+- `ssrf-cloud`
+- `mcp-config`
+- `unicode-attack`
+- `indirect-injection`
+- `third-party-content`
+- `toxic-flow`
+- `rug-pull`
+
+---
+
+## Combining Options
+
+### Example: Production Scan
+
+```go
+import "runtime"
+
+result, err := aguara.Scan(ctx, "./skills/",
+    // Only report high/critical issues
+    aguara.WithMinSeverity(aguara.SeverityHigh),
+    
+    // Use all CPU cores
+    aguara.WithWorkers(runtime.NumCPU()),
+    
+    // Skip test fixtures and vendor code
+    aguara.WithIgnorePatterns([]string{
+        "vendor/",
+        "test/fixtures/",
+        "*.log",
+    }),
+    
+    // Limit file size
+    aguara.WithMaxFileSize(10 * 1024 * 1024),
+)
+```
+
+### Example: Development Scan
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    // Show all findings
+    aguara.WithMinSeverity(aguara.SeverityInfo),
+    
+    // Load custom rules
+    aguara.WithCustomRules("./custom-rules/"),
+    
+    // Disable noisy rules during development
+    aguara.WithDisabledRules("UNICODE_001", "UNICODE_002"),
+)
+```
+
+### Example: CI/CD Scan
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    // Fail on high or critical
+    aguara.WithMinSeverity(aguara.SeverityHigh),
+    
+    // Fast parallel scanning
+    aguara.WithWorkers(8),
+    
+    // Override severity for specific rules
+    aguara.WithRuleOverrides(map[string]aguara.RuleOverride{
+        "PROMPT_INJECTION_001": {Severity: "critical"},
+        "EXFIL_005":           {Severity: "critical"},
+    }),
+)
+
+if len(result.Findings) > 0 {
+    os.Exit(1)
+}
+```
+
+## Option Scope
+
+| Option | `Scan()` | `ScanContent()` | `ListRules()` | `ExplainRule()` |
+|--------|----------|------------------|----------------|------------------|
+| `WithCustomRules` | ✓ | ✓ | ✓ | ✓ |
+| `WithDisabledRules` | ✓ | ✓ | - | - |
+| `WithRuleOverrides` | ✓ | ✓ | - | - |
+| `WithMinSeverity` | ✓ | ✓ | - | - |
+| `WithWorkers` | ✓ | - | - | - |
+| `WithIgnorePatterns` | ✓ | - | - | - |
+| `WithMaxFileSize` | ✓ | - | - | - |
+| `WithCategory` | - | - | ✓ | - |
+
+## Related
+
+- [Scan()](/api/scan) - File/directory scanning
+- [ScanContent()](/api/scan-content) - Inline content scanning
+- [ListRules()](/api/list-rules) - List all rules
+- [ExplainRule()](/api/explain-rule) - Get rule details

@@ -1,0 +1,275 @@
+---
+title: Installation
+description: Install Aguara via curl script, Homebrew, Docker, or from source
+---
+
+## Quick Install (Recommended)
+
+The fastest way to install Aguara is using the official install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+```
+
+This installs the latest binary to `~/.local/bin` and verifies the checksum automatically.
+
+### Customize Install Location
+
+You can customize the installation with environment variables:
+
+```bash
+# Install to a custom directory
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+
+# Pin to a specific version
+VERSION=v0.5.0 curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+
+# Combine both
+VERSION=v0.5.0 INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+```
+
+<Note>
+The install script automatically:
+- Detects your OS (Linux, macOS) and architecture (amd64, arm64)
+- Downloads the correct pre-built binary from GitHub releases
+- Verifies the SHA256 checksum
+- Makes the binary executable
+- Checks if the install directory is in your `$PATH`
+</Note>
+
+## Homebrew (macOS/Linux)
+
+If you prefer using Homebrew:
+
+```bash
+brew install garagon/tap/aguara
+```
+
+Homebrew automatically adds the binary to your PATH and handles updates via `brew upgrade aguara`.
+
+## Docker (No Installation Required)
+
+Run Aguara directly from Docker without installing anything:
+
+```bash
+# Scan current directory
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+
+# Scan with options
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --severity high --format json
+
+# Pin to a specific version
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara:v0.5.0 scan /scan
+
+# Scan MCP configs
+docker run --rm -v "$HOME":/home ghcr.io/garagon/aguara scan /home/.config/claude/config.json
+```
+
+<Tip>
+The Docker image is based on Alpine Linux and is only ~15MB compressed. It's perfect for CI/CD environments.
+</Tip>
+
+## Install from Source
+
+Requires **Go 1.25+**:
+
+```bash
+go install github.com/garagon/aguara/cmd/aguara@latest
+```
+
+The binary will be installed to `$GOPATH/bin` (usually `~/go/bin`).
+
+<Warning>
+Make sure `$GOPATH/bin` is in your `$PATH`. Add this to your shell config if needed:
+
+```bash
+export PATH="$HOME/go/bin:$PATH"
+```
+</Warning>
+
+### Build from Source (Development)
+
+Clone the repository and build manually:
+
+```bash
+git clone https://github.com/garagon/aguara.git
+cd aguara
+go build -o aguara ./cmd/aguara
+sudo mv aguara /usr/local/bin/
+```
+
+## Pre-built Binaries
+
+Download pre-built binaries for Linux, macOS, and Windows from the [GitHub Releases page](https://github.com/garagon/aguara/releases).
+
+Available architectures:
+- **Linux**: amd64, arm64
+- **macOS**: amd64 (Intel), arm64 (Apple Silicon)
+- **Windows**: amd64
+
+### Manual Installation Steps
+
+<Steps>
+  <Step title="Download the archive">
+    Download the appropriate `.tar.gz` file for your platform from the [releases page](https://github.com/garagon/aguara/releases/latest).
+  </Step>
+  
+  <Step title="Extract the binary">
+    ```bash
+    tar -xzf aguara_<version>_<os>_<arch>.tar.gz
+    ```
+  </Step>
+  
+  <Step title="Move to PATH">
+    ```bash
+    sudo mv aguara /usr/local/bin/
+    chmod +x /usr/local/bin/aguara
+    ```
+  </Step>
+  
+  <Step title="Verify installation">
+    ```bash
+    aguara version
+    ```
+  </Step>
+</Steps>
+
+## System Requirements
+
+<Card>
+  ### Minimum Requirements
+  
+  - **OS**: Linux (glibc 2.17+), macOS 10.15+, Windows 10+
+  - **Architecture**: amd64 (x86_64) or arm64 (aarch64)
+  - **Memory**: 100MB minimum, 500MB recommended for large codebases
+  - **Disk**: 20MB for binary, 100MB for state files with `--monitor`
+  
+  ### For Building from Source
+  
+  - **Go**: Version 1.25 or later
+  - **Git**: Any recent version
+</Card>
+
+## Verify Installation
+
+After installation, verify Aguara is working correctly:
+
+```bash
+# Check version
+aguara version
+
+# Expected output:
+# aguara v0.5.0 (commit: abc1234)
+
+# Test a simple scan
+aguara scan --help
+
+# Discover MCP configs on your machine
+aguara discover
+```
+
+## Shell Completion (Optional)
+
+Aguara supports shell completion for Bash, Zsh, Fish, and PowerShell:
+
+<CodeGroup>
+
+```bash Bash
+# Add to ~/.bashrc
+eval "$(aguara completion bash)"
+```
+
+```bash Zsh
+# Add to ~/.zshrc
+eval "$(aguara completion zsh)"
+```
+
+```bash Fish
+# Add to ~/.config/fish/config.fish
+aguara completion fish | source
+```
+
+```powershell PowerShell
+# Add to your PowerShell profile
+aguara completion powershell | Out-String | Invoke-Expression
+```
+
+</CodeGroup>
+
+## Update Aguara
+
+Depending on your installation method:
+
+<CodeGroup>
+
+```bash Install Script
+# Re-run the install script to get the latest version
+curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+```
+
+```bash Homebrew
+brew upgrade aguara
+```
+
+```bash Go Install
+go install github.com/garagon/aguara/cmd/aguara@latest
+```
+
+```bash Docker
+# Pull the latest image
+docker pull ghcr.io/garagon/aguara:latest
+```
+
+</CodeGroup>
+
+<Note>
+Aguara automatically checks for updates when you run commands (unless `AGUARA_NO_UPDATE_CHECK=1` is set). You'll see a message if a new version is available.
+</Note>
+
+## Troubleshooting
+
+### Binary not in PATH
+
+If you see `command not found: aguara` after installation:
+
+1. Check if the install directory is in your PATH:
+   ```bash
+   echo $PATH
+   ```
+
+2. Add the install directory to your shell config:
+   ```bash
+   # For bash (~/.bashrc) or zsh (~/.zshrc)
+   export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+3. Reload your shell:
+   ```bash
+   source ~/.bashrc  # or source ~/.zshrc
+   ```
+
+### Permission Denied
+
+If you get a permission error during installation:
+
+```bash
+# Option 1: Install to a user-writable directory
+INSTALL_DIR=$HOME/.local/bin curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+
+# Option 2: Use sudo for system-wide installation
+sudo curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+```
+
+### Unsupported Platform
+
+The install script supports Linux and macOS on amd64/arm64. For other platforms:
+
+1. Try the Docker image (works on any platform)
+2. Build from source with Go 1.25+
+3. Check the [releases page](https://github.com/garagon/aguara/releases) for pre-built binaries
+
+## Next Steps
+
+<Card title="Quick Start" icon="rocket" href="/quickstart">
+  Run your first scan in under 2 minutes
+</Card>

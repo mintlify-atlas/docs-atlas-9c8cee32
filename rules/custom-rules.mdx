@@ -1,0 +1,457 @@
+---
+title: Custom Rules
+description: Write your own YAML detection rules to extend Aguara
+---
+
+Aguara supports custom detection rules in YAML format. No code required — define patterns, severity, and target file types to detect threats specific to your organization.
+
+## Rule YAML Schema
+
+Here's a complete custom rule example:
+
+```yaml
+id: CUSTOM_001
+name: "Internal API endpoint"
+description: "Detects references to internal APIs"
+severity: HIGH
+category: custom
+targets: ["*.md", "*.txt"]
+match_mode: any
+remediation: "Replace internal API URLs with the public endpoint or environment variable."
+patterns:
+  - type: regex
+    value: "https?://internal\\.mycompany\\.com"
+  - type: contains
+    value: "api.internal"
+exclude_patterns:
+  - type: contains
+    value: "## documentation"
+examples:
+  true_positive:
+    - "Fetch data from https://internal.mycompany.com/api/users"
+  false_positive:
+    - "Our public API is at https://api.mycompany.com"
+```
+
+### Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier (e.g., `CUSTOM_001`) |
+| `name` | string | Human-readable rule name |
+| `description` | string | What the rule detects |
+| `severity` | string | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or `INFO` |
+| `category` | string | Rule category (e.g., `custom`, `prompt-injection`) |
+| `patterns` | array | List of detection patterns (see below) |
+
+### Optional Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `targets` | array | All files | File globs (e.g., `["*.md", "*.json"]`) |
+| `match_mode` | string | `any` | `any` (OR) or `all` (AND) |
+| `exclude_patterns` | array | None | Patterns that suppress matches |
+| `remediation` | string | None | How to fix the issue |
+| `examples` | object | None | Test cases for validation |
+
+## Pattern Types
+
+### Regex Patterns
+
+Use Go's RE2 regex syntax (no lookaheads or lookbehinds):
+
+```yaml
+patterns:
+  - type: regex
+    value: "(?i)password\\s*=\\s*['\"]\\w+['\"]"  # case-insensitive
+  - type: regex
+    value: "\\bsk-[a-zA-Z0-9]{20,}\\b"  # word boundary
+```
+
+**Escaping**: Use double backslashes (`\\`) in YAML strings.
+
+**Flags**:
+- `(?i)` — case-insensitive
+- `(?m)` — multiline mode
+- `(?s)` — dot matches newline
+
+### Contains Patterns
+
+Simple substring matching (case-insensitive):
+
+```yaml
+patterns:
+  - type: contains
+    value: "sk-proj-"  # matches "sk-proj-abc123"
+  - type: contains
+    value: "OPENAI_API_KEY"
+```
+
+## Match Modes
+
+### Any Mode (OR)
+
+Default. Any pattern match triggers the rule:
+
+```yaml
+match_mode: any
+patterns:
+  - type: contains
+    value: "password"
+  - type: contains
+    value: "api_key"
+```
+
+Matches if text contains "password" **OR** "api_key".
+
+### All Mode (AND)
+
+All patterns must match:
+
+```yaml
+match_mode: all
+patterns:
+  - type: contains
+    value: "urgent"
+  - type: contains
+    value: "admin override"
+```
+
+Matches only if text contains **both** "urgent" and "admin override".
+
+## Exclude Patterns
+
+Suppress matches in specific contexts:
+
+```yaml
+exclude_patterns:
+  - type: contains
+    value: "## installation"
+  - type: regex
+    value: "(?i)pip3?\\s+install\\s+--upgrade"
+```
+
+If the matched line (or up to 3 lines before it) matches any exclude pattern, the finding is suppressed.
+
+**Use case**: Reduce false positives in documentation, installation guides, and code examples.
+
+### Example: Suppress in Code Blocks
+
+```yaml
+id: CUSTOM_002
+name: "Production database URL"
+patterns:
+  - type: regex
+    value: "postgresql://prod\\.db\\.company\\.com"
+exclude_patterns:
+  - type: contains
+    value: "```"  # suppress inside code blocks
+```
+
+## File Targets
+
+Limit rules to specific file types:
+
+```yaml
+targets: ["*.md", "*.txt"]  # markdown and text only
+targets: ["*.yaml", "*.yml", "*.json"]  # config files only
+targets: ["*.js", "*.ts", "*.py"]  # source code only
+```
+
+Omit `targets` to scan all files.
+
+## Examples (Self-Testing)
+
+Provide test cases to validate your rule:
+
+```yaml
+examples:
+  true_positive:
+    - "password = 'secret123'"
+    - "API_KEY=sk-proj-abc123"
+  false_positive:
+    - "# Example: password = 'placeholder'"
+    - "Set a strong password for your account"
+```
+
+**true_positive**: Text that **should** trigger the rule.
+**false_positive**: Text that **should not** trigger the rule.
+
+Run `aguara test-rules` to validate your custom rules against these examples (future feature).
+
+## Multi-Document YAML
+
+Define multiple rules in one file using `---` separators:
+
+```yaml
+id: CUSTOM_001
+name: "Internal API"
+patterns:
+  - type: contains
+    value: "internal.api"
+severity: HIGH
+category: custom
+---
+id: CUSTOM_002
+name: "Production database"
+patterns:
+  - type: regex
+    value: "prod\\.db\\.company\\.com"
+severity: CRITICAL
+category: custom
+```
+
+## Loading Custom Rules
+
+Place custom rules in a directory and pass `--rules`:
+
+```bash
+aguara scan .claude/skills/ --rules ./custom-rules/
+```
+
+Directory structure:
+
+```
+custom-rules/
+├── internal-apis.yaml
+├── credentials.yaml
+└── mcp-specific.yaml
+```
+
+## Real-World Examples
+
+### Detect Internal Hostnames
+
+```yaml
+id: CUSTOM_INTERNAL_HOST
+name: "Internal hostname reference"
+description: "Detects references to internal infrastructure"
+severity: MEDIUM
+category: custom
+targets: ["*.md", "*.txt", "*.yaml", "*.json"]
+patterns:
+  - type: regex
+    value: "(?i)(https?://)?[a-z0-9-]+\\.(internal|corp|local|lan)\\b"
+remediation: "Replace internal hostnames with public endpoints or environment variables."
+examples:
+  true_positive:
+    - "http://db.internal:5432"
+    - "api.corp/v1/users"
+  false_positive:
+    - "https://api.example.com"
+```
+
+### Detect Hardcoded IP Addresses
+
+```yaml
+id: CUSTOM_IP_ADDRESS
+name: "Hardcoded IP address"
+description: "Detects hardcoded IPv4 addresses (non-localhost)"
+severity: LOW
+category: custom
+patterns:
+  - type: regex
+    value: "\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b"
+exclude_patterns:
+  - type: regex
+    value: "\\b127\\.0\\.0\\.1\\b"  # exclude localhost
+  - type: regex
+    value: "\\b0\\.0\\.0\\.0\\b"  # exclude bind-all
+examples:
+  true_positive:
+    - "Connect to 192.168.1.100:8080"
+  false_positive:
+    - "Listening on 127.0.0.1:3000"
+    - "Bind to 0.0.0.0:8000"
+```
+
+### Detect Sensitive Environment Variables
+
+```yaml
+id: CUSTOM_SENSITIVE_ENV
+name: "Sensitive environment variable access"
+description: "Detects access to sensitive env vars"
+severity: MEDIUM
+category: custom
+targets: ["*.md", "*.txt", "*.sh", "*.py", "*.js"]
+match_mode: any
+patterns:
+  - type: regex
+    value: "\\$\\{?(?:AWS_SECRET_ACCESS_KEY|ANTHROPIC_API_KEY|DATABASE_PASSWORD)\\}?"
+  - type: regex
+    value: "os\\.environ\\[['\"](?:AWS_SECRET_ACCESS_KEY|DATABASE_PASSWORD)['\"]"
+  - type: regex
+    value: "process\\.env\\.(?:AWS_SECRET_ACCESS_KEY|DATABASE_PASSWORD)"
+remediation: "Avoid directly accessing sensitive env vars. Use a secrets manager or key vault."
+examples:
+  true_positive:
+    - "password = os.environ['DATABASE_PASSWORD']"
+    - "const key = process.env.ANTHROPIC_API_KEY"
+  false_positive:
+    - "export DATABASE_URL=postgres://localhost"
+```
+
+### Detect Debugging Artifacts
+
+```yaml
+id: CUSTOM_DEBUG_ARTIFACTS
+name: "Debugging artifacts"
+description: "Detects leftover debug code and print statements"
+severity: LOW
+category: custom
+targets: ["*.py", "*.js", "*.ts"]
+patterns:
+  - type: regex
+    value: "(?i)\\b(console\\.log|print|debugger|breakpoint)\\s*\\("
+exclude_patterns:
+  - type: contains
+    value: "# TODO: remove debug"
+examples:
+  true_positive:
+    - "console.log('API response:', data)"
+    - "print(user.password)"
+  false_positive:
+    - "# TODO: remove debug print before deployment"
+```
+
+### Detect Deprecated MCP Servers
+
+```yaml
+id: CUSTOM_DEPRECATED_MCP
+name: "Deprecated MCP server"
+description: "Detects usage of deprecated MCP servers"
+severity: MEDIUM
+category: mcp-config
+targets: ["*.json"]
+patterns:
+  - type: contains
+    value: "@modelcontextprotocol/server-legacy"
+  - type: contains
+    value: "mcp-server-deprecated"
+remediation: "Migrate to the recommended MCP server: @modelcontextprotocol/server-filesystem"
+examples:
+  true_positive:
+    - '{"command": "npx", "args": ["@modelcontextprotocol/server-legacy"]}'
+  false_positive:
+    - '{"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]}'
+```
+
+## Best Practices
+
+### 1. Start with High-Signal Patterns
+
+Avoid overly broad patterns that cause false positives:
+
+```yaml
+# ❌ Too broad
+patterns:
+  - type: contains
+    value: "password"
+
+# ✅ More specific
+patterns:
+  - type: regex
+    value: "(?i)password\\s*=\\s*['\"]\\w+['\"]"  # assignment only
+```
+
+### 2. Use Exclude Patterns Liberally
+
+Reduce noise by excluding common false-positive contexts:
+
+```yaml
+exclude_patterns:
+  - type: contains
+    value: "## example"
+  - type: contains
+    value: "# test data"
+  - type: regex
+    value: "(?i)placeholder|sample|demo"
+```
+
+### 3. Provide Remediation Guidance
+
+Help users fix the issue:
+
+```yaml
+remediation: |
+  Replace hardcoded credentials with environment variables:
+  - Use `os.environ['API_KEY']` instead of `api_key = 'sk-...'`
+  - Store secrets in `.env` and load with `python-dotenv`
+```
+
+### 4. Test with Examples
+
+Validate your rule before deployment:
+
+```yaml
+examples:
+  true_positive:
+    - "api_key = 'sk-proj-abc123'"
+    - "OPENAI_API_KEY=sk-1234567890"
+  false_positive:
+    - "Set your API_KEY in .env"
+    - "# Example: api_key = 'your-key-here'"
+```
+
+### 5. Use Descriptive IDs and Names
+
+```yaml
+# ❌ Generic
+id: CUSTOM_001
+name: "Bad pattern"
+
+# ✅ Descriptive
+id: CUSTOM_INTERNAL_API
+name: "Internal API endpoint reference"
+```
+
+## Constraints
+
+### RE2 Regex Syntax
+
+Go's `regexp` package uses RE2 syntax, which **does not support**:
+
+- Lookaheads: `(?=...)`, `(?!...)`
+- Lookbehinds: `(?<=...)`, `(?<!...)`
+- Backreferences: `\1`, `\2`
+- Possessive quantifiers: `*+`, `++`
+
+**Workaround**: Use multiple patterns with `match_mode: all`:
+
+```yaml
+# Instead of: (?=.*urgent)(?=.*admin)
+match_mode: all
+patterns:
+  - type: contains
+    value: "urgent"
+  - type: contains
+    value: "admin"
+```
+
+### File Size Limit
+
+Rule files larger than 1 MB are skipped with a warning.
+
+### No Cross-File Analysis
+
+Rules scan files independently — no cross-file taint tracking (use built-in Toxic Flow analyzer for that).
+
+## Sharing Rules
+
+Share your custom rules with the community:
+
+1. Publish to a GitHub repo
+2. Document the threat model and remediation
+3. Include `examples` for validation
+4. Submit a PR to Aguara's built-in rules if widely applicable
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rule Overview" icon="book" href="/rules/overview">
+    Learn how to list and explain built-in rules
+  </Card>
+  <Card title="Browse Categories" icon="grid" href="/rules/categories">
+    See all 177 built-in rules across 13 categories
+  </Card>
+</CardGroup>

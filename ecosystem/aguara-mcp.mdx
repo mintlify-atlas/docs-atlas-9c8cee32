@@ -1,0 +1,162 @@
+---
+title: 'Aguara MCP Server'
+description: 'Give AI agents the ability to scan skills and configurations for security threats before installing them'
+---
+
+## Overview
+
+[Aguara MCP](https://github.com/garagon/aguara-mcp) is an MCP server that gives AI agents the ability to scan skills and configurations for security threats — before installing or running them. It imports Aguara as a Go library — one `go install`, no external binary needed.
+
+## Installation
+
+```bash
+# Install the MCP server
+go install github.com/garagon/aguara-mcp@latest
+
+# Register with Claude Code
+claude mcp add aguara -- aguara-mcp
+```
+
+## Available Tools
+
+Your agent gets **4 security scanning tools**:
+
+### `scan_content`
+
+Scan inline content for security threats without writing to disk.
+
+**Parameters:**
+- `content` (string): The content to scan (skill file, config, etc.)
+- `filename` (string): Filename for context (e.g., "skill.md")
+- `min_severity` (optional): Minimum severity to report (info, low, medium, high, critical)
+
+**Example:**
+```json
+{
+  "content": "# My Skill\n\nFetch data from API_KEY=sk-1234...",
+  "filename": "skill.md",
+  "min_severity": "medium"
+}
+```
+
+### `check_mcp_config`
+
+Scan MCP server configuration for security issues.
+
+**Parameters:**
+- `config_content` (string): MCP config JSON content
+- `min_severity` (optional): Minimum severity filter
+
+**Example:**
+```json
+{
+  "config_content": "{\"mcpServers\": {...}}",
+  "min_severity": "high"
+}
+```
+
+### `list_rules`
+
+List all available detection rules, optionally filtered by category.
+
+**Parameters:**
+- `category` (optional): Filter by category (prompt-injection, credential-leak, exfiltration, etc.)
+
+**Example:**
+```json
+{
+  "category": "prompt-injection"
+}
+```
+
+### `explain_rule`
+
+Get detailed information about a specific rule including patterns, examples, and remediation.
+
+**Parameters:**
+- `rule_id` (string): Rule identifier (e.g., "PROMPT_INJECTION_001")
+
+**Example:**
+```json
+{
+  "rule_id": "CRED_004"
+}
+```
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="No Network Required" icon="wifi-slash">
+    All scanning happens locally with no external API calls
+  </Card>
+  <Card title="Millisecond Scans" icon="bolt">
+    Fast pattern matching and NLP analysis powered by Go
+  </Card>
+  <Card title="177+ Rules" icon="shield-check">
+    Comprehensive detection across 13 security categories
+  </Card>
+  <Card title="No LLM Required" icon="microchip">
+    Deterministic static analysis without AI inference
+  </Card>
+</CardGroup>
+
+## Use Cases
+
+### Before Installing Skills
+
+Ask your agent to scan a skill before adding it to your configuration:
+
+```
+Scan this skill file for security issues before I install it:
+[paste skill content]
+```
+
+### Before Running MCP Servers
+
+Check MCP server configurations for security risks:
+
+```
+Check this MCP config for security issues:
+[paste mcp config]
+```
+
+### Understanding Security Rules
+
+Learn about specific security rules and how to fix them:
+
+```
+Explain rule PROMPT_INJECTION_001 and show me examples
+```
+
+### Exploring Available Rules
+
+Discover what security checks are available:
+
+```
+Show me all rules for detecting credential leaks
+```
+
+## How It Works
+
+Aguara MCP imports the [Aguara Go library](/go-library) directly, providing the full scanner capabilities through MCP tools. The agent can:
+
+1. **Scan first** — Check content for threats before execution
+2. **Decide intelligently** — Review findings with severity and confidence scores
+3. **Explain risks** — Understand what each finding means and how to fix it
+4. **Stay offline** — No data leaves your machine
+
+## GitHub Repository
+
+<Card
+  title="garagon/aguara-mcp"
+  icon="github"
+  href="https://github.com/garagon/aguara-mcp"
+>
+  View source code, report issues, and contribute to Aguara MCP
+</Card>
+
+## Related
+
+- [Aguara Watch](/ecosystem/aguara-watch) — Continuous monitoring of 28,000+ AI agent skills
+- [Go Library](/go-library) — Embed Aguara in your own tools
+- [Detection Rules](/rules) — 177+ built-in security rules

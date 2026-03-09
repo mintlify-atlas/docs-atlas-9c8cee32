@@ -1,0 +1,377 @@
+---
+title: Docker
+description: Run Aguara security scans in Docker containers for CI/CD pipelines and isolated environments
+---
+
+Aguara provides an official Docker image for running security scans in containerized environments without installing binaries on the host system.
+
+## Quick Start
+
+```bash
+# Scan current directory
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+
+# Scan with options
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --severity high --format json
+```
+
+The image is hosted at `ghcr.io/garagon/aguara` and updated with every release.
+
+## Image tags
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release |
+| `v0.5.0` | Specific version (recommended for CI) |
+| `main` | Latest commit from main branch (unstable) |
+
+```bash
+# Use latest
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara:latest scan /scan
+
+# Pin to version
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara:v0.5.0 scan /scan
+```
+
+## Dockerfile
+
+The official Aguara image is built from this Dockerfile:
+
+```dockerfile
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags "-s -w" -o /aguara ./cmd/aguara
+
+FROM alpine:3.21
+RUN apk add --no-cache git
+COPY --from=builder /aguara /usr/local/bin/aguara
+ENTRYPOINT ["aguara"]
+CMD ["scan", "."]
+```
+
+The image includes `git` to support `--changed` mode for incremental scanning.
+
+## Usage patterns
+
+### Mount current directory
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+```
+
+Mounts your current directory as `/scan` inside the container and scans it.
+
+### Scan specific subdirectory
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan/.claude/skills/
+```
+
+### Output to file
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --format json -o /scan/results.json
+```
+
+Outputs to `results.json` in your current directory (accessible via the volume mount).
+
+### Fail on severity threshold
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --fail-on high
+if [ $? -ne 0 ]; then
+  echo "High or critical findings detected"
+  exit 1
+fi
+```
+
+### CI mode
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --ci
+```
+
+Equivalent to `--fail-on high --no-color`.
+
+### Custom rules directory
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --rules /scan/custom-rules/
+```
+
+Mounts your directory and loads custom rules from `./custom-rules/`.
+
+### Multiple volumes
+
+```bash
+docker run --rm \
+  -v "$(pwd)/skills":/skills:ro \
+  -v "$(pwd)/custom-rules":/rules:ro \
+  -v "$(pwd)/output":/output \
+  ghcr.io/garagon/aguara scan /skills --rules /rules -o /output/results.sarif
+```
+
+Mounts skills (read-only), custom rules (read-only), and output directory (read-write).
+
+## CI/CD integration
+
+### GitHub Actions
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  
+  - name: Scan with Docker
+    run: |
+      docker run --rm -v "${{ github.workspace }}":/scan \
+        ghcr.io/garagon/aguara:v0.5.0 scan /scan --ci
+```
+
+No installation step required — the action pulls the image and runs the scan.
+
+### GitLab CI
+
+```yaml
+aguara-scan:
+  stage: test
+  image: ghcr.io/garagon/aguara:v0.5.0
+  script:
+    - aguara scan /builds/$CI_PROJECT_PATH --format sarif -o gl-sast-report.sarif --fail-on high
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+Use the Aguara image directly as the job image — no docker-in-docker required.
+
+### CircleCI
+
+```yaml
+jobs:
+  security-scan:
+    docker:
+      - image: ghcr.io/garagon/aguara:v0.5.0
+    steps:
+      - checkout
+      - run:
+          name: Scan for security issues
+          command: aguara scan . --ci
+```
+
+### Jenkins
+
+```groovy
+pipeline {
+  agent any
+  stages {
+    stage('Security Scan') {
+      steps {
+        script {
+          docker.image('ghcr.io/garagon/aguara:v0.5.0').inside {
+            sh 'aguara scan /workspace --format sarif -o aguara-results.sarif --fail-on high'
+          }
+        }
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: 'aguara-results.sarif', allowEmptyArchive: true
+    }
+  }
+}
+```
+
+### Bitbucket Pipelines
+
+```yaml
+pipelines:
+  default:
+    - step:
+        name: Aguara Security Scan
+        image: ghcr.io/garagon/aguara:v0.5.0
+        script:
+          - aguara scan . --ci
+        artifacts:
+          - aguara-results.sarif
+```
+
+## Advanced usage
+
+### Incremental scanning with git
+
+```bash
+# Mount .git to enable --changed mode
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --changed
+```
+
+The image includes `git`, so `--changed` detects modified files from the mounted `.git` directory.
+
+### Rug-pull detection with state persistence
+
+```bash
+# Create state directory
+mkdir -p ~/.aguara
+
+# Mount state directory
+docker run --rm \
+  -v "$(pwd)":/scan \
+  -v "$HOME/.aguara":/root/.aguara \
+  ghcr.io/garagon/aguara scan /scan --monitor
+```
+
+Persists scan state across runs to detect file changes (rug-pull attacks).
+
+### Override entrypoint
+
+```bash
+# Run a shell
+docker run --rm -it --entrypoint /bin/sh ghcr.io/garagon/aguara
+
+# Run a different command
+docker run --rm ghcr.io/garagon/aguara list-rules --format json
+```
+
+### Build custom image with embedded rules
+
+```dockerfile
+FROM ghcr.io/garagon/aguara:v0.5.0
+COPY custom-rules/ /custom-rules/
+ENTRYPOINT ["aguara", "scan", ".", "--rules", "/custom-rules/"]
+```
+
+Build and run:
+
+```bash
+docker build -t myorg/aguara-custom .
+docker run --rm -v "$(pwd)":/scan myorg/aguara-custom /scan
+```
+
+### Multi-platform builds
+
+The official image supports `linux/amd64` and `linux/arm64`:
+
+```bash
+# Pull and run on ARM (e.g. M1/M2 Mac)
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara:latest scan /scan
+
+# Build your own multi-platform image
+docker buildx build --platform linux/amd64,linux/arm64 -t myorg/aguara:latest .
+```
+
+## Output formats in Docker
+
+### Terminal (default)
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --format terminal
+```
+
+Use `--no-color` if your terminal doesn't support ANSI:
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --no-color
+```
+
+### JSON
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --format json -o /scan/results.json
+```
+
+### SARIF
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --format sarif -o /scan/results.sarif
+```
+
+### Markdown
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --format markdown -o /scan/report.md
+```
+
+## Troubleshooting
+
+### Permission denied errors
+
+Output files are created as root inside the container. Fix ownership:
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan -o /scan/results.json
+sudo chown $USER:$USER results.json
+```
+
+Or run with the current user:
+
+```bash
+docker run --rm --user $(id -u):$(id -g) -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+```
+
+### .git directory not detected
+
+Ensure `.git` is inside the mounted directory:
+
+```bash
+# Wrong: only mounts ./skills/, not .git
+docker run --rm -v "$(pwd)/skills":/scan ghcr.io/garagon/aguara scan /scan --changed
+
+# Correct: mounts entire repo including .git
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan/skills --changed
+```
+
+### Image pull rate limit
+
+GitHub Container Registry (ghcr.io) has rate limits for unauthenticated pulls. Authenticate:
+
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+docker pull ghcr.io/garagon/aguara:latest
+```
+
+### Large scan times out
+
+Increase Docker's resource limits or use `--changed` mode:
+
+```bash
+docker run --rm --memory=4g --cpus=4 -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+```
+
+Or scan incrementally:
+
+```bash
+docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan --changed
+```
+
+## Docker Compose
+
+```yaml
+services:
+  aguara:
+    image: ghcr.io/garagon/aguara:v0.5.0
+    volumes:
+      - ./:/scan:ro
+      - ./output:/output
+    command: scan /scan --format sarif -o /output/results.sarif --fail-on high
+```
+
+Run:
+
+```bash
+docker-compose run --rm aguara
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Actions" icon="github" href="/ci/github-actions">
+    Integrate with GitHub Actions workflows
+  </Card>
+  <Card title="GitLab CI" icon="gitlab" href="/ci/gitlab-ci">
+    Integrate with GitLab CI/CD pipelines
+  </Card>
+</CardGroup>

@@ -1,0 +1,277 @@
+---
+title: "ListRules()"
+description: "Get all available detection rules"
+---
+
+## Function Signature
+
+```go
+func ListRules(opts ...Option) []RuleInfo
+```
+
+**Source**: `aguara.go:120`
+
+## Description
+
+Returns metadata for all available detection rules. This includes:
+
+- 148+ built-in rules across 14 categories
+- Custom rules from `WithCustomRules()` if specified
+- Rules sorted by ID
+- Optional category filtering with `WithCategory()`
+
+## Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `opts` | `...Option` | Functional options (only `WithCategory()` and `WithCustomRules()` apply) |
+
+## Return Values
+
+| Type | Description |
+|------|-------------|
+| `[]RuleInfo` | Slice of rule metadata (never nil, may be empty) |
+
+## Type Definition
+
+```go
+type RuleInfo struct {
+    ID       string `json:"id"`       // "PROMPT_INJECTION_001"
+    Name     string `json:"name"`     // "Instruction override attempt"
+    Severity string `json:"severity"` // "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"
+    Category string `json:"category"` // "prompt-injection", "credential-leak", etc.
+}
+```
+
+## Examples
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "fmt"
+    
+    "github.com/garagon/aguara"
+)
+
+func main() {
+    rules := aguara.ListRules()
+    
+    fmt.Printf("Total rules: %d\n", len(rules))
+    
+    for _, r := range rules {
+        fmt.Printf("[%s] %s - %s (%s)\n",
+            r.ID, r.Name, r.Severity, r.Category)
+    }
+}
+```
+
+### Filter by Category
+
+```go
+// List only prompt injection rules
+rules := aguara.ListRules(
+    aguara.WithCategory("prompt-injection"),
+)
+
+fmt.Printf("Prompt injection rules: %d\n", len(rules))
+```
+
+### Count Rules by Severity
+
+```go
+rules := aguara.ListRules()
+
+counts := make(map[string]int)
+for _, r := range rules {
+    counts[r.Severity]++
+}
+
+fmt.Printf("Critical: %d\n", counts["CRITICAL"])
+fmt.Printf("High:     %d\n", counts["HIGH"])
+fmt.Printf("Medium:   %d\n", counts["MEDIUM"])
+fmt.Printf("Low:      %d\n", counts["LOW"])
+fmt.Printf("Info:     %d\n", counts["INFO"])
+```
+
+### Count Rules by Category
+
+```go
+rules := aguara.ListRules()
+
+counts := make(map[string]int)
+for _, r := range rules {
+    counts[r.Category]++
+}
+
+for cat, count := range counts {
+    fmt.Printf("%-25s %3d rules\n", cat, count)
+}
+```
+
+### List Critical Rules Only
+
+```go
+rules := aguara.ListRules()
+
+fmt.Println("Critical rules:")
+for _, r := range rules {
+    if r.Severity == "CRITICAL" {
+        fmt.Printf("  [%s] %s\n", r.ID, r.Name)
+    }
+}
+```
+
+### Generate Rule Documentation
+
+```go
+import (
+    "encoding/json"
+    "os"
+)
+
+func exportRules(outputPath string) error {
+    rules := aguara.ListRules()
+    
+    f, err := os.Create(outputPath)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+    
+    enc := json.NewEncoder(f)
+    enc.SetIndent("", "  ")
+    return enc.Encode(rules)
+}
+```
+
+### List Custom Rules
+
+```go
+// List both built-in and custom rules
+rules := aguara.ListRules(
+    aguara.WithCustomRules("./custom-rules/"),
+)
+
+fmt.Printf("Total rules (built-in + custom): %d\n", len(rules))
+```
+
+### Search for Rules by Name
+
+```go
+import "strings"
+
+rules := aguara.ListRules()
+
+query := "shell"
+matches := []aguara.RuleInfo{}
+
+for _, r := range rules {
+    if strings.Contains(strings.ToLower(r.Name), strings.ToLower(query)) {
+        matches = append(matches, r)
+    }
+}
+
+fmt.Printf("Rules matching '%s': %d\n", query, len(matches))
+for _, r := range matches {
+    fmt.Printf("  [%s] %s\n", r.ID, r.Name)
+}
+```
+
+### Markdown Table Output
+
+```go
+import "fmt"
+
+rules := aguara.ListRules()
+
+fmt.Println("| ID | Name | Severity | Category |")
+fmt.Println("|---|---|---|---|")
+
+for _, r := range rules {
+    fmt.Printf("| %s | %s | %s | %s |\n",
+        r.ID, r.Name, r.Severity, r.Category)
+}
+```
+
+### Group Rules by Category
+
+```go
+rules := aguara.ListRules()
+
+// Group by category
+byCategory := make(map[string][]aguara.RuleInfo)
+for _, r := range rules {
+    byCategory[r.Category] = append(byCategory[r.Category], r)
+}
+
+// Print grouped
+for cat, catRules := range byCategory {
+    fmt.Printf("\n%s (%d rules):\n", cat, len(catRules))
+    for _, r := range catRules {
+        fmt.Printf("  [%s] %s - %s\n", r.ID, r.Name, r.Severity)
+    }
+}
+```
+
+## Built-in Categories
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `prompt-injection` | 22 | Instruction overrides, jailbreaks, delimiter injection |
+| `credential-leak` | 19 | API keys, private keys, database strings |
+| `exfiltration` | 17 | Webhook exfil, DNS tunneling, file reads |
+| `external-download` | 17 | Binary downloads, curl-pipe-shell |
+| `supply-chain` | 15 | Download-and-execute, reverse shells |
+| `command-execution` | 16 | shell=True, eval, subprocess |
+| `mcp-attack` | 12 | Tool injection, name shadowing |
+| `ssrf-cloud` | 10 | Cloud metadata, Docker socket |
+| `mcp-config` | 8 | Unpinned npx, hardcoded secrets |
+| `unicode-attack` | 7 | RTL override, homoglyphs |
+| `indirect-injection` | 6 | Fetch-and-follow, remote config |
+| `third-party-content` | 5 | Mutable raw content |
+| `toxic-flow` | 3 | Taint tracking |
+| `rug-pull` | 1 | Tool description changes |
+
+## Rule ID Format
+
+Rule IDs follow the pattern `CATEGORY_NNN`:
+
+- `PROMPT_INJECTION_001` - Prompt injection category, rule #1
+- `EXFIL_005` - Exfiltration category, rule #5
+- `CRED_001` - Credential leak category, rule #1
+
+## Loading Custom Rules
+
+Custom rules are loaded from a directory containing YAML files:
+
+```go
+rules := aguara.ListRules(
+    aguara.WithCustomRules("./custom-rules/"),
+)
+
+// Custom rules are merged with built-in rules
+// Custom rules can override built-in rules with the same ID
+```
+
+## Error Handling
+
+`ListRules()` never returns an error. If rule loading fails:
+
+- Warnings are printed to `stderr`
+- Invalid rules are skipped
+- Function returns successfully loaded rules
+
+## Performance Notes
+
+- Rules are loaded and compiled on each call
+- For repeated calls, consider caching the result
+- Typical execution time: < 10ms for 148 rules
+
+## Related
+
+- [ExplainRule()](/api/explain-rule) - Get detailed information about a specific rule
+- [WithCategory()](/api/options#withcategory) - Filter rules by category
+- [WithCustomRules()](/api/options#withcustomrules) - Load custom rules

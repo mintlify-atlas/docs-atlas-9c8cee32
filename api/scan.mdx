@@ -1,0 +1,192 @@
+---
+title: "Scan()"
+description: "Scan files and directories on disk for security issues"
+---
+
+## Function Signature
+
+```go
+func Scan(ctx context.Context, path string, opts ...Option) (*ScanResult, error)
+```
+
+**Source**: `aguara.go:81`
+
+## Description
+
+Scans a file or directory on disk for security issues using all registered analyzers:
+
+- **Pattern Matcher**: Regex/contains matching against YAML rules
+- **NLP Injection**: Markdown-specific instruction injection detection
+- **Toxic Flow**: Taint tracking for dangerous data flows
+- **Rug-Pull**: File change detection (when used with `--monitor`)
+
+## Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ctx` | `context.Context` | Context for cancellation and timeout |
+| `path` | `string` | File or directory path to scan |
+| `opts` | `...Option` | Functional options (see [Options](/api/options)) |
+
+## Return Values
+
+| Type | Description |
+|------|-------------|
+| `*ScanResult` | Scan results containing findings, file count, and metadata |
+| `error` | Non-nil if path doesn't exist, permission denied, or rule compilation fails |
+
+## Examples
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/garagon/aguara"
+)
+
+func main() {
+    ctx := context.Background()
+    result, err := aguara.Scan(ctx, "./skills/")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Scanned %d files, found %d issues\n",
+        result.FilesScanned, len(result.Findings))
+}
+```
+
+### With Minimum Severity Filter
+
+```go
+// Only report MEDIUM and above
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithMinSeverity(aguara.SeverityMedium),
+)
+```
+
+### With Disabled Rules
+
+```go
+// Skip specific rules
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithDisabledRules("EXFIL_005", "CRED_001"),
+)
+```
+
+### With Custom Rules
+
+```go
+// Load additional rules from a directory
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithCustomRules("./custom-rules/"),
+)
+```
+
+### With Multiple Options
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithMinSeverity(aguara.SeverityHigh),
+    aguara.WithWorkers(8),
+    aguara.WithDisabledRules("UNICODE_001"),
+    aguara.WithIgnorePatterns([]string{"vendor/", "*.log"}),
+)
+```
+
+### With Timeout
+
+```go
+import "time"
+
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+result, err := aguara.Scan(ctx, "./large-directory/")
+if err != nil {
+    if ctx.Err() == context.DeadlineExceeded {
+        log.Fatal("Scan timed out")
+    }
+    log.Fatal(err)
+}
+```
+
+### Processing Results
+
+```go
+result, err := aguara.Scan(ctx, "./skills/")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Count findings by severity
+counts := make(map[aguara.Severity]int)
+for _, f := range result.Findings {
+    counts[f.Severity]++
+}
+
+fmt.Printf("Critical: %d\n", counts[aguara.SeverityCritical])
+fmt.Printf("High:     %d\n", counts[aguara.SeverityHigh])
+fmt.Printf("Medium:   %d\n", counts[aguara.SeverityMedium])
+```
+
+### Exit on Critical Findings
+
+```go
+result, err := aguara.Scan(ctx, "./skills/")
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, f := range result.Findings {
+    if f.Severity == aguara.SeverityCritical {
+        fmt.Fprintf(os.Stderr, "CRITICAL: %s at %s:%d\n",
+            f.RuleName, f.FilePath, f.Line)
+    }
+}
+
+if hasCritical(result) {
+    os.Exit(1)
+}
+
+func hasCritical(r *aguara.ScanResult) bool {
+    for _, f := range r.Findings {
+        if f.Severity == aguara.SeverityCritical {
+            return true
+        }
+    }
+    return false
+}
+```
+
+## File Discovery
+
+When scanning a directory, Aguara:
+
+1. Recursively walks the directory tree
+2. Skips ignored patterns (`.git/`, `node_modules/`, etc.)
+3. Skips binary file extensions (`.exe`, `.dll`, `.so`, `.png`, `.jpg`, `.zip`, `.pdf`)
+4. Respects `.aguaraignore` files (gitignore-style patterns)
+5. Applies `WithIgnorePatterns()` if specified
+6. Filters by `WithMaxFileSize()` if set (default: 50 MB)
+
+## Concurrency
+
+Scanning is parallelized using a worker pool:
+
+- Default worker count: `runtime.NumCPU()`
+- Override with `WithWorkers(n)`
+- Each worker processes one file at a time
+- Results are collected concurrently
+
+## Related
+
+- [ScanContent()](/api/scan-content) - Scan inline content without disk I/O
+- [Options](/api/options) - All available functional options
+- [ScanResult](/api/types#scanresult) - Result type definition

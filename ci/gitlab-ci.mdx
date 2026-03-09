@@ -1,0 +1,347 @@
+---
+title: GitLab CI/CD
+description: Integrate Aguara security scanning into GitLab CI/CD pipelines with SAST report artifacts
+---
+
+Aguara integrates with GitLab CI/CD through SARIF artifacts, enabling security scanning for AI agent skills and MCP server configurations directly in your pipeline.
+
+## Quick Start
+
+Add to `.gitlab-ci.yml`:
+
+```yaml
+security-scan:
+  stage: test
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan . --format sarif -o gl-sast-report.sarif --fail-on high
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+This scans your repository, generates a SARIF report, and uploads it as a GitLab SAST artifact.
+
+## SAST Integration
+
+GitLab displays SARIF results in the Security Dashboard and merge request widgets when you upload findings as SAST artifacts.
+
+### Basic SAST job
+
+```yaml
+aguara-scan:
+  stage: test
+  image: alpine:3.21
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - aguara scan . --format sarif -o gl-sast-report.sarif --severity medium
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    expire_in: 1 week
+    when: always
+```
+
+### With severity threshold
+
+```yaml
+aguara-scan:
+  stage: security
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan ./mcp-server/ --format sarif -o gl-sast-report.sarif --fail-on high
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+  allow_failure: false
+```
+
+Fails the pipeline if high or critical findings are detected. Set `allow_failure: true` to report findings without blocking the pipeline.
+
+## Using Docker
+
+Use the official Aguara Docker image to avoid installation steps:
+
+```yaml
+aguara-scan:
+  stage: test
+  image: ghcr.io/garagon/aguara:latest
+  script:
+    - aguara scan /builds/$CI_PROJECT_PATH --format sarif -o gl-sast-report.sarif --fail-on high
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+The Docker image includes git, so `--changed` mode works:
+
+```yaml
+aguara-scan:
+  image: ghcr.io/garagon/aguara:latest
+  script:
+    - aguara scan /builds/$CI_PROJECT_PATH --changed --format sarif -o gl-sast-report.sarif
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+## Scanning specific paths
+
+```yaml
+scan-skills:
+  stage: test
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan ./.claude/skills/ --format sarif -o gl-sast-report.sarif
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+  only:
+    changes:
+      - .claude/skills/**/*
+```
+
+Only runs when files in `.claude/skills/` are modified.
+
+## Multiple output formats
+
+Generate both SARIF (for GitLab) and JSON (for custom processing):
+
+```yaml
+aguara-scan:
+  stage: test
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan . --format sarif -o gl-sast-report.sarif
+    - ~/.local/bin/aguara scan . --format json -o aguara-results.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    paths:
+      - aguara-results.json
+    when: always
+```
+
+## Custom rules
+
+```yaml
+aguara-scan:
+  stage: test
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan . --rules ./custom-rules/ --format sarif -o gl-sast-report.sarif
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+Loads additional detection rules from `./custom-rules/`.
+
+## Pin a specific version
+
+```yaml
+variables:
+  AGUARA_VERSION: v0.5.0
+
+aguara-scan:
+  stage: test
+  script:
+    - VERSION=$AGUARA_VERSION curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan . --format sarif -o gl-sast-report.sarif
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+Or with Docker:
+
+```yaml
+aguara-scan:
+  image: ghcr.io/garagon/aguara:v0.5.0
+  script:
+    - aguara scan . --format sarif -o gl-sast-report.sarif
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+```
+
+## Merge request comments
+
+Post findings as a merge request comment:
+
+```yaml
+aguara-scan:
+  stage: test
+  script:
+    - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    - ~/.local/bin/aguara scan . --format sarif -o gl-sast-report.sarif --fail-on high
+    - ~/.local/bin/aguara scan . --format markdown -o findings.md
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    paths:
+      - findings.md
+    when: always
+  after_script:
+    - |
+      if [ -f findings.md ] && [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        COMMENT=$(cat findings.md)
+        curl --request POST \
+          --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" \
+          --data "body=$COMMENT" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes"
+      fi
+```
+
+Requires `CI_JOB_TOKEN` to have API access (GitLab 14.0+).
+
+## Complete pipeline example
+
+```yaml
+stages:
+  - test
+  - security
+  - deploy
+
+variables:
+  AGUARA_VERSION: latest
+
+# Run on merge requests and main branch
+aguara-scan:
+  stage: security
+  image: ghcr.io/garagon/aguara:${AGUARA_VERSION}
+  script:
+    - |
+      aguara scan /builds/$CI_PROJECT_PATH \
+        --format sarif \
+        -o gl-sast-report.sarif \
+        --severity medium \
+        --fail-on high \
+        --verbose
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    paths:
+      - gl-sast-report.sarif
+    expire_in: 30 days
+    when: always
+  allow_failure: false
+  only:
+    - merge_requests
+    - main
+
+# Full scan on schedule
+aguara-full-scan:
+  stage: security
+  image: ghcr.io/garagon/aguara:${AGUARA_VERSION}
+  script:
+    - aguara scan /builds/$CI_PROJECT_PATH --format sarif -o gl-sast-report.sarif --severity info
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    expire_in: 90 days
+    when: always
+  only:
+    - schedules
+
+# Incremental scan on commits
+aguara-changed:
+  stage: test
+  image: ghcr.io/garagon/aguara:${AGUARA_VERSION}
+  script:
+    - aguara scan /builds/$CI_PROJECT_PATH --changed --format sarif -o gl-sast-report.sarif --fail-on high
+  artifacts:
+    reports:
+      sast: gl-sast-report.sarif
+    when: always
+  allow_failure: true
+  except:
+    - schedules
+    - main
+```
+
+This pipeline:
+- Runs a medium+ scan on merge requests and main (fails on high+)
+- Runs a full info-level scan weekly (scheduled)
+- Runs an incremental scan on other branches (non-blocking)
+
+## Viewing results
+
+### Security Dashboard
+
+Findings appear in:
+- **Security & Compliance** → **Vulnerability Report**
+- **Merge Requests** → Security widget
+- **Pipeline** → Security tab
+
+### Download SARIF artifact
+
+```bash
+# Using GitLab CLI
+gl ci artifact download --job aguara-scan gl-sast-report.sarif
+
+# Or via API
+curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+  "https://gitlab.com/api/v4/projects/$PROJECT_ID/jobs/artifacts/main/raw/gl-sast-report.sarif?job=aguara-scan"
+```
+
+## Troubleshooting
+
+### SAST report not appearing
+
+Ensure:
+- Artifact name is exactly `gl-sast-report.sarif`
+- SARIF file is valid JSON (test: `jq . gl-sast-report.sarif`)
+- `artifacts.reports.sast` is set (not just `artifacts.paths`)
+
+### Job fails with "command not found"
+
+Add install directory to PATH:
+
+```yaml
+script:
+  - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+  - export PATH="$HOME/.local/bin:$PATH"
+  - aguara scan .
+```
+
+Or use the full path:
+
+```yaml
+script:
+  - curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+  - ~/.local/bin/aguara scan .
+```
+
+### Large repositories timeout
+
+Increase job timeout or use `--changed` mode:
+
+```yaml
+aguara-scan:
+  timeout: 30m
+  script:
+    - aguara scan . --changed --format sarif -o gl-sast-report.sarif
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Actions" icon="github" href="/ci/github-actions">
+    Integrate with GitHub Actions workflows
+  </Card>
+  <Card title="Docker" icon="docker" href="/ci/docker">
+    Run Aguara in Docker containers
+  </Card>
+</CardGroup>

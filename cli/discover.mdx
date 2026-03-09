@@ -1,0 +1,295 @@
+---
+title: aguara discover
+description: Discover MCP client configurations on your machine
+---
+
+## Overview
+
+The `aguara discover` command scans well-known paths for MCP (Model Context Protocol) client configurations across 17 supported applications. It identifies installed clients and lists their configured servers.
+
+## Usage
+
+```bash
+aguara discover [flags]
+```
+
+### Examples
+
+```bash
+# Discover MCP clients (tree view)
+aguara discover
+
+# JSON output for automation
+aguara discover --format json
+
+# Markdown output for documentation
+aguara discover --format markdown
+```
+
+## Flags
+
+The `discover` command accepts no arguments and uses only global flags:
+
+<ParamField path="--format" type="string" default="terminal">
+  Output format.
+  
+  **Valid values:**
+  - `terminal` - Tree-style view with client details
+  - `json` - Structured JSON for parsing
+  - `markdown` (or `md`) - Markdown tables
+  
+  ```bash
+  aguara discover --format json
+  ```
+</ParamField>
+
+## Output Formats
+
+### Terminal (default)
+
+Tree-style view showing discovered clients and their configured servers:
+
+```bash
+$ aguara discover
+
+Discovered 3 MCP clients with 5 total servers:
+
+├─ Claude Desktop (macOS)
+│  ~/.config/claude/claude_desktop_config.json
+│  ├─ filesystem
+│  └─ memory
+│
+├─ Cline (VS Code)
+│  ~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json
+│  ├─ github
+│  ├─ puppeteer
+│  └─ brave-search
+│
+└─ Continue (VS Code)
+   ~/.continue/config.json
+   └─ fetch
+```
+
+### JSON
+
+Structured output for automation and integration:
+
+```bash
+$ aguara discover --format json
+```
+
+```json
+{
+  "clients": [
+    {
+      "name": "Claude Desktop (macOS)",
+      "path": "/Users/username/.config/claude/claude_desktop_config.json",
+      "servers": [
+        {
+          "name": "filesystem",
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+        },
+        {
+          "name": "memory",
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-memory"]
+        }
+      ]
+    },
+    {
+      "name": "Cline (VS Code)",
+      "path": "/Users/username/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json",
+      "servers": [
+        {
+          "name": "github",
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"]
+        }
+      ]
+    }
+  ],
+  "total_clients": 2,
+  "total_servers": 3
+}
+```
+
+### Markdown
+
+Markdown tables for documentation:
+
+```bash
+$ aguara discover --format markdown
+```
+
+```markdown
+## MCP Client Discovery
+
+Found 2 clients with 3 total servers.
+
+### Claude Desktop (macOS)
+
+**Config:** `~/.config/claude/claude_desktop_config.json`
+
+| Server | Command | Args |
+|--------|---------|------|
+| filesystem | npx | -y, @modelcontextprotocol/server-filesystem |
+| memory | npx | -y, @modelcontextprotocol/server-memory |
+
+### Cline (VS Code)
+
+**Config:** `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+
+| Server | Command | Args |
+|--------|---------|------|
+| github | npx | -y, @modelcontextprotocol/server-github |
+```
+
+## Supported Clients
+
+Aguara discovers configurations for 17 MCP-compatible clients:
+
+### Desktop Applications
+- Claude Desktop (macOS)
+- Claude Desktop (Windows)
+- Zed Editor
+
+### VS Code Extensions
+- Cline (formerly Roo-Cline)
+- Continue
+- Sourcegraph Cody
+- GitHub Copilot Chat
+- Aide
+
+### JetBrains IDEs
+- IntelliJ IDEA
+- PyCharm
+- WebStorm
+- GoLand
+
+### Other Editors
+- Emacs
+- Neovim
+- Jupyter
+
+### CLI Tools
+- mcp (official CLI client)
+
+## Discovery Paths
+
+Aguara scans well-known configuration locations based on your operating system:
+
+### macOS
+```
+~/.config/claude/claude_desktop_config.json
+~/Library/Application Support/Claude/
+~/Library/Application Support/Code/User/globalStorage/
+~/Library/Application Support/JetBrains/
+~/.config/zed/
+~/.emacs.d/
+~/.config/nvim/
+```
+
+### Linux
+```
+~/.config/claude/
+~/.config/Code/User/globalStorage/
+~/.config/JetBrains/
+~/.config/zed/
+~/.emacs.d/
+~/.config/nvim/
+```
+
+### Windows
+```
+%APPDATA%\Claude\
+%APPDATA%\Code\User\globalStorage\
+%APPDATA%\JetBrains\
+%APPDATA%\Zed\
+```
+
+## Use Cases
+
+### Inventory MCP installations
+
+Discover what MCP clients and servers are installed on your machine:
+
+```bash
+aguara discover
+```
+
+### Auto-scan all discovered configs
+
+Combine with `aguara scan --auto` to scan all discovered configurations:
+
+```bash
+# First, see what will be scanned
+aguara discover
+
+# Then scan all discovered configs
+aguara scan --auto
+```
+
+### Export for documentation
+
+Generate markdown documentation of your MCP setup:
+
+```bash
+aguara discover --format markdown > mcp-inventory.md
+```
+
+### Automation and CI
+
+Use JSON output in scripts and CI pipelines:
+
+```bash
+# Count total MCP servers
+aguara discover --format json | jq '.total_servers'
+
+# List all server names
+aguara discover --format json | jq -r '.clients[].servers[].name'
+
+# Find configs using npx (potential security risk)
+aguara discover --format json | jq -r '.clients[].servers[] | select(.command == "npx") | .name'
+```
+
+## No Clients Found
+
+If no MCP clients are discovered:
+
+```bash
+$ aguara discover
+
+No MCP configurations found.
+```
+
+This means:
+- No supported MCP clients are installed
+- Clients are installed in non-standard locations
+- Configuration files don't exist yet
+
+## Security Scanning
+
+After discovering MCP configurations, scan them for vulnerabilities:
+
+```bash
+# Scan all discovered configs automatically
+aguara scan --auto
+
+# Or scan specific discovered config
+aguara scan ~/.config/claude/claude_desktop_config.json
+```
+
+See [aguara scan](/cli/scan) for scanning options.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| 0 | Discovery completed successfully (even if no clients found) |
+| 1 | Error during discovery process |
+
+## Related Commands
+
+- [aguara scan](/cli/scan) - Scan discovered configs for security issues
+- [aguara list-rules](/cli/list-rules) - View detection rules

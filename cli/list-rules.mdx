@@ -1,0 +1,384 @@
+---
+title: aguara list-rules
+description: List all available detection rules
+---
+
+## Overview
+
+The `aguara list-rules` command displays all available detection rules, including built-in rules and custom rules (if specified). Rules can be filtered by category and output in various formats.
+
+## Usage
+
+```bash
+aguara list-rules [flags]
+```
+
+### Examples
+
+```bash
+# List all rules
+aguara list-rules
+
+# Filter by category
+aguara list-rules --category prompt-injection
+
+# JSON output
+aguara list-rules --format json
+
+# Include custom rules
+aguara list-rules --rules ./custom-rules/
+
+# Exclude specific rules
+aguara list-rules --disable-rule EXFIL_005
+```
+
+## Flags
+
+<ParamField path="--category" type="string">
+  Filter rules by category.
+  
+  **Valid categories:**
+  - `prompt-injection`
+  - `credential-leak`
+  - `exfiltration`
+  - `external-download`
+  - `supply-chain`
+  - `command-execution`
+  - `mcp-attack`
+  - `ssrf-cloud`
+  - `mcp-config`
+  - `unicode-attack`
+  - `indirect-injection`
+  - `third-party-content`
+  - `toxic-flow`
+  - `rug-pull`
+  
+  ```bash
+  aguara list-rules --category credential-leak
+  ```
+</ParamField>
+
+### Global Flags (inherited)
+
+<ParamField path="--format" type="string" default="terminal">
+  Output format.
+  
+  **Valid values:** `terminal`, `json`
+  
+  ```bash
+  aguara list-rules --format json
+  ```
+</ParamField>
+
+<ParamField path="--rules" type="string">
+  Path to custom rules directory. Custom rules are loaded in addition to built-in rules.
+  
+  ```bash
+  aguara list-rules --rules ./custom-rules/
+  ```
+</ParamField>
+
+<ParamField path="--disable-rule" type="string[]">
+  Exclude specific rule IDs from the list (can be specified multiple times).
+  
+  ```bash
+  aguara list-rules --disable-rule EXFIL_005 --disable-rule CRED_001
+  ```
+</ParamField>
+
+## Output Formats
+
+### Terminal (default)
+
+Tabular view with rule ID, name, severity, and category:
+
+```bash
+$ aguara list-rules
+
+ID                        NAME                                    SEVERITY  CATEGORY
+--                        ----                                    --------  --------
+PROMPT_INJECTION_001      Instruction override attempt            CRITICAL  prompt-injection
+PROMPT_INJECTION_002      Role switching attempt                  HIGH      prompt-injection
+CRED_001                  OpenAI API key                          CRITICAL  credential-leak
+CRED_002                  Anthropic API key                       CRITICAL  credential-leak
+EXFIL_005                 Webhook data exfiltration               HIGH      exfiltration
+COMMAND_EXEC_003          Arbitrary shell command execution       CRITICAL  command-execution
+MCP_ATTACK_001            MCP tool injection                      HIGH      mcp-attack
+SSRF_CLOUD_001            AWS metadata SSRF (IMDSv1)             HIGH      ssrf-cloud
+UNICODE_ATTACK_001        Unicode right-to-left override          MEDIUM    unicode-attack
+...
+
+148 rules loaded
+```
+
+### JSON
+
+Structured output for parsing and automation:
+
+```bash
+$ aguara list-rules --format json
+```
+
+```json
+[
+  {
+    "id": "PROMPT_INJECTION_001",
+    "name": "Instruction override attempt",
+    "severity": "CRITICAL",
+    "category": "prompt-injection"
+  },
+  {
+    "id": "CRED_001",
+    "name": "OpenAI API key",
+    "severity": "CRITICAL",
+    "category": "credential-leak"
+  },
+  {
+    "id": "EXFIL_005",
+    "name": "Webhook data exfiltration",
+    "severity": "HIGH",
+    "category": "exfiltration"
+  }
+]
+```
+
+## Rule Categories
+
+Aguara includes 148+ built-in detection rules across 14 categories:
+
+### prompt-injection (22 rules)
+
+Detects attempts to override, ignore, or manipulate AI instructions:
+- Instruction override patterns
+- Role switching and authority claims
+- Delimiter injection
+- Jailbreak attempts
+- Developer mode requests
+
+```bash
+aguara list-rules --category prompt-injection
+```
+
+### credential-leak (19 rules)
+
+Detects exposed credentials and API keys:
+- OpenAI, Anthropic, Google, AWS keys
+- GitHub tokens, Stripe keys
+- Database connection strings
+- Private SSH/RSA keys
+- Bearer tokens
+
+```bash
+aguara list-rules --category credential-leak
+```
+
+### exfiltration (17 rules)
+
+Detects data exfiltration attempts:
+- Webhook exfiltration
+- DNS tunneling
+- Base64-encoded data transmission
+- Reading sensitive files (.env, credentials)
+- Environment variable leaks
+
+```bash
+aguara list-rules --category exfiltration
+```
+
+### external-download (17 rules)
+
+Detects risky download patterns:
+- Binary downloads from untrusted sources
+- curl | bash patterns
+- wget | sh patterns
+- Auto-install scripts
+
+```bash
+aguara list-rules --category external-download
+```
+
+### supply-chain (15 rules)
+
+Detects supply chain attacks:
+- Download-and-execute patterns
+- Reverse shells
+- Obfuscated commands
+- Suspicious package installations
+
+```bash
+aguara list-rules --category supply-chain
+```
+
+### command-execution (16 rules)
+
+Detects arbitrary command execution:
+- `subprocess` with `shell=True`
+- `eval()` and `exec()`
+- Node.js `child_process`
+- PowerShell execution
+- os.system() calls
+
+```bash
+aguara list-rules --category command-execution
+```
+
+### mcp-attack (12 rules)
+
+Detects MCP-specific attacks:
+- Tool injection
+- Name shadowing
+- Manifest tampering
+- Capability escalation
+- Resource URI manipulation
+
+```bash
+aguara list-rules --category mcp-attack
+```
+
+### ssrf-cloud (10 rules)
+
+Detects SSRF and cloud metadata access:
+- AWS IMDS (169.254.169.254)
+- GCP metadata server
+- Azure metadata API
+- Docker socket access
+- Kubernetes API access
+
+```bash
+aguara list-rules --category ssrf-cloud
+```
+
+### mcp-config (8 rules)
+
+Detects insecure MCP configurations:
+- Unpinned npx commands
+- Hardcoded secrets in config
+- Shell metacharacters in args
+- World-writable paths
+
+```bash
+aguara list-rules --category mcp-config
+```
+
+### unicode-attack (7 rules)
+
+Detects Unicode-based obfuscation:
+- Right-to-left override (RTLO)
+- Bidirectional text manipulation
+- Homoglyph characters
+- Unicode tag characters
+
+```bash
+aguara list-rules --category unicode-attack
+```
+
+### indirect-injection (6 rules)
+
+Detects indirect prompt injection:
+- Fetch-and-follow patterns
+- Remote config loading
+- Email/document-as-instructions
+
+```bash
+aguara list-rules --category indirect-injection
+```
+
+### third-party-content (5 rules)
+
+Detects risks from third-party content:
+- Mutable raw GitHub content
+- Unvalidated API responses
+- Dynamic code from untrusted sources
+
+```bash
+aguara list-rules --category third-party-content
+```
+
+### toxic-flow (3 rules)
+
+Taint tracking from sources to sinks:
+- User input → shell execution
+- Environment variables → command injection
+- API data → eval/exec
+
+```bash
+aguara list-rules --category toxic-flow
+```
+
+### rug-pull (1 rule)
+
+Detects malicious changes in previously scanned files:
+- Requires `--monitor` flag during scanning
+- Triggers when file hash changes and new content is dangerous
+
+```bash
+aguara list-rules --category rug-pull
+```
+
+## Severity Levels
+
+Rules are classified by severity:
+
+| Severity | Description | Example |
+|----------|-------------|----------|
+| **CRITICAL** | Direct security compromise | Exposed API keys, reverse shells |
+| **HIGH** | High-risk vulnerabilities | Prompt injection, SSRF, data exfil |
+| **MEDIUM** | Moderate security concerns | Unicode obfuscation, unpinned deps |
+| **LOW** | Minor issues or warnings | Suspicious patterns |
+| **INFO** | Informational findings | Code style, documentation |
+
+## Filtering Rules
+
+### By category
+
+```bash
+aguara list-rules --category prompt-injection
+```
+
+### Exclude specific rules
+
+```bash
+aguara list-rules --disable-rule EXFIL_005 --disable-rule CRED_001
+```
+
+### Count rules per category
+
+```bash
+aguara list-rules --format json | jq 'group_by(.category) | map({category: .[0].category, count: length})'
+```
+
+### Filter by severity
+
+```bash
+aguara list-rules --format json | jq '.[] | select(.severity == "CRITICAL")'
+```
+
+## Custom Rules
+
+Load additional rules from a custom directory:
+
+```bash
+aguara list-rules --rules ./custom-rules/
+```
+
+Custom rules are merged with built-in rules. See [Writing Custom Rules](/guides/custom-rules) for rule authoring.
+
+## Rule Details
+
+For detailed information about a specific rule, use [aguara explain](/cli/explain):
+
+```bash
+aguara explain PROMPT_INJECTION_001
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| 0 | Rules listed successfully |
+| 1 | Error loading or compiling rules |
+
+## Related Commands
+
+- [aguara explain](/cli/explain) - Show detailed information about a rule
+- [aguara scan](/cli/scan) - Run detection rules against files

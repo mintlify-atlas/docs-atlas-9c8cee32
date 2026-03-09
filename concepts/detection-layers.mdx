@@ -1,0 +1,599 @@
+---
+title: "Detection Layers"
+description: "Deep dive into Aguara's 4-layer analysis engine and how each layer catches different attack patterns"
+---
+
+## Overview
+
+Aguara runs **4 analysis layers sequentially** on every scanned file. Each layer specializes in a different detection technique:
+
+| Layer | Analyzer | Targets | Strengths |
+|-------|----------|---------|----------|
+| **1** | Pattern Matcher | All files | Fast regex/substring matching, base64/hex decoding, code block awareness |
+| **2** | NLP Analyzer | `.md`, `.txt` | Goldmark AST walker, hidden instructions, heading/code mismatches |
+| **3** | Taint Tracker | All files | Source-to-sink flow analysis, dangerous capability combos |
+| **4** | Rug-Pull Detector | All files | SHA256 hash tracking, detects tool description changes |
+
+All layers operate **offline** — no network calls, no LLM, deterministic output.
+
+---
+
+## Layer 1: Pattern Matcher
+
+**File**: `internal/engine/pattern/matcher.go`
+
+The Pattern Matcher is the workhorse of Aguara's detection engine. It applies 177 compiled YAML rules using regex and substring matching.
+
+### Features
+
+<AccordionGroup>
+  <Accordion title="Regex and Contains Matching">
+    Rules can use either regex (RE2 syntax) or case-insensitive substring matching:
+
+    ```go internal/engine/pattern/matcher.go:175-208
+    func matchPattern(pat rules.CompiledPattern, content string, lines []string) []matchHit {
+        var hits []matchHit
+        switch pat.Type {
+        case rules.PatternRegex:
+            if pat.Regex == nil {
+                return nil
+            }
+            locs := pat.Regex.FindAllStringIndex(content, -1)
+            for _, loc := range locs {
+                line := lineNumberAtOffset(content, loc[0])
+                matched := content[loc[0]:loc[1]]
+                if len(matched) > 200 {
+                    matched = matched[:200] + "..."
+                }
+                hits = append(hits, matchHit{line: line, text: matched})
+            }
+        case rules.PatternContains:
+            lower := strings.ToLower(content)
+            target := pat.Value // already lowercased during compilation
+            idx := 0
+            for {
+                pos := strings.Index(lower[idx:], target)
+                if pos == -1 {
+                    break
+                }
+                absPos := idx + pos
+                line := lineNumberAtOffset(content, absPos)
+                matched := content[absPos : absPos+len(target)]
+                hits = append(hits, matchHit{line: line, text: matched})
+                idx = absPos + len(target)
+            }
+        }
+        return hits
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Base64 and Hex Decoder">
+    Layer 1 includes a sub-layer that decodes base64 and hex blobs, then re-scans the decoded content:
+
+    ```go internal/engine/pattern/decoder.go:27-56
+    func DecodeAndRescan(target *scanner.Target, compiled []*rules.CompiledRule, cbMap []bool) []scanner.Finding {
+        var findings []scanner.Finding
+        content := string(target.Content)
+        lines := target.Lines()
+
+        // Scan for base64 blobs
+        for _, loc := range base64Re.FindAllStringIndex(content, -1) {
+            if loc[1]-loc[0] > maxEncodedBlobSize {
+                continue
+            }
+            encoded := content[loc[0]:loc[1]]
+            decoded, err := base64.StdEncoding.DecodeString(encoded)
+            if err != nil {
+                // try URL-safe
+                decoded, err = base64.URLEncoding.DecodeString(encoded)
+                if err != nil {
+                    continue
+                }
+            }
+            if !isPrintable(decoded) || len(decoded) < 8 {
+                continue
+            }
+            if len(decoded) > maxDecodedSize {
+                decoded = decoded[:maxDecodedSize]
+            }
+            line := lineNumberAtOffset(content, loc[0])
+            findings = append(findings, rescan(decoded, line, lines, target, compiled, "base64", cbMap)...)
+        }
+        // ... similar logic for hex blobs ...
+    }
+    ```
+
+    This catches obfuscated credentials and commands hidden in base64/hex strings.
+  </Accordion>
+
+  <Accordion title="Code Block Awareness">
+    For markdown files, Layer 1 builds a boolean map indicating which lines are inside fenced code blocks:
+
+    ```go internal/engine/pattern/matcher.go:258-277
+    func BuildCodeBlockMap(lines []string) []bool {
+        m := make([]bool, len(lines))
+        inBlock := false
+        for i, line := range lines {
+            trimmed := strings.TrimSpace(line)
+            if strings.HasPrefix(trimmed, "```") {
+                if inBlock {
+                    // closing fence — this line is still inside the block
+                    m[i] = true
+                    inBlock = false
+                } else {
+                    // opening fence — this line is not inside content
+                    inBlock = true
+                }
+                continue
+            }
+            m[i] = inBlock
+        }
+        return m
+    }
+    ```
+
+    Findings inside code blocks are **automatically downgraded one severity level** (CRITICAL → HIGH, HIGH → MEDIUM, etc.).
+  </Accordion>
+
+  <Accordion title="Exclude Patterns">
+    Rules can define `exclude_patterns` to suppress false positives:
+
+    ```go internal/engine/pattern/matcher.go:148-173
+    func isExcluded(excludes []rules.CompiledPattern, lines []string, lineNum int) bool {
+        if len(excludes) == 0 || lineNum < 1 || lineNum > len(lines) {
+            return false
+        }
+        // Check the matched line and up to 3 lines before it
+        start := max(lineNum-3, 1)
+        for _, ep := range excludes {
+            for i := start; i <= lineNum; i++ {
+                line := lines[i-1]
+                switch ep.Type {
+                case rules.PatternRegex:
+                    if ep.Regex != nil && ep.Regex.MatchString(line) {
+                        return true
+                    }
+                case rules.PatternContains:
+                    if strings.Contains(strings.ToLower(line), ep.Value) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+    ```
+
+    If the matched line or the 3 lines before it match an exclude pattern, the finding is suppressed.
+  </Accordion>
+</AccordionGroup>
+
+### Example Rule
+
+```yaml
+id: CRED_001
+name: "OpenAI API key"
+severity: CRITICAL
+category: credential-leak
+patterns:
+  - type: regex
+    value: "sk-[a-zA-Z0-9]{20,}"
+exclude_patterns:
+  - type: contains
+    value: "## Installation"
+  - type: contains
+    value: "pip install"
+```
+
+---
+
+## Layer 2: NLP Analyzer
+
+**File**: `internal/engine/nlp/injection.go`
+
+The NLP Analyzer parses markdown structure using [Goldmark](https://github.com/yuin/goldmark) and applies keyword-based classification to detect prompt injection patterns.
+
+### Goldmark AST Walker
+
+```go internal/engine/nlp/markdown.go:49-126
+func ParseMarkdown(source []byte) []MarkdownSection {
+    md := goldmark.New()
+    reader := text.NewReader(source)
+    doc := md.Parser().Parse(reader)
+
+    var sections []MarkdownSection
+    walkNode(doc, source, &sections, source)
+    return sections
+}
+
+func walkNode(n ast.Node, source []byte, sections *[]MarkdownSection, fullSource []byte) {
+    switch node := n.(type) {
+    case *ast.Heading:
+        *sections = append(*sections, MarkdownSection{
+            Type:  SectionHeading,
+            Text:  extractText(node, source),
+            Line:  lineFromNode(node, fullSource),
+            Level: node.Level,
+        })
+    case *ast.Paragraph:
+        text := extractText(node, source)
+        line := lineFromNode(node, fullSource)
+        if isHTMLComment(text) {
+            *sections = append(*sections, MarkdownSection{
+                Type: SectionHTMLComment,
+                Text: text,
+                Line: line,
+            })
+        } else {
+            *sections = append(*sections, MarkdownSection{
+                Type: SectionParagraph,
+                Text: text,
+                Line: line,
+            })
+        }
+    case *ast.FencedCodeBlock:
+        lang := ""
+        if node.Language(source) != nil {
+            lang = string(node.Language(source))
+        }
+        *sections = append(*sections, MarkdownSection{
+            Type:     SectionCodeBlock,
+            Text:     extractCodeBlockText(node, source),
+            Line:     lineFromNode(node, fullSource),
+            Language: lang,
+        })
+    // ... more node types ...
+    }
+}
+```
+
+### Detection Rules
+
+The NLP layer checks for:
+
+<CardGroup cols={2}>
+  <Card title="Hidden HTML Comments" icon="comment">
+    HTML comments containing action verbs:
+
+    ```go internal/engine/nlp/injection.go:66-83
+    func checkHiddenComment(section MarkdownSection, lines []string, target *scanner.Target) []scanner.Finding {
+        if section.Type != SectionHTMLComment {
+            return nil
+        }
+        if semanticTagRe.MatchString(section.Text) || devCommentRe.MatchString(section.Text) {
+            return nil
+        }
+        if !actionVerbRe.MatchString(section.Text) {
+            return nil
+        }
+        return []scanner.Finding{makeFinding(
+            "NLP_HIDDEN_INSTRUCTION",
+            "Hidden HTML comment contains action verbs",
+            scanner.SeverityHigh,
+            "prompt-injection",
+            section, lines, target,
+        )}
+    }
+    ```
+  </Card>
+
+  <Card title="Code Block Mismatch" icon="code">
+    Code blocks labeled as benign (JSON, YAML) but containing executable content:
+
+    ```go internal/engine/nlp/injection.go:86-100
+    func checkCodeMismatch(section MarkdownSection, lines []string, target *scanner.Target) []scanner.Finding {
+        if section.Type != SectionCodeBlock || section.Language == "" {
+            return nil
+        }
+        if !mismatchBenignLangs[section.Language] || !hasExecutableContent(section.Text) {
+            return nil
+        }
+        return []scanner.Finding{makeFinding(
+            "NLP_CODE_MISMATCH",
+            fmt.Sprintf("Code block labeled %q contains executable content", section.Language),
+            scanner.SeverityHigh,
+            "prompt-injection",
+            section, lines, target,
+        )}
+    }
+    ```
+  </Card>
+
+  <Card title="Heading Mismatch" icon="heading">
+    Benign headings followed by dangerous body content:
+
+    ```go internal/engine/nlp/injection.go:103-128
+    func checkHeadingMismatch(sections []MarkdownSection, i int, lines []string, target *scanner.Target) []scanner.Finding {
+        section := sections[i]
+        if section.Type != SectionHeading || i+1 >= len(sections) {
+            return nil
+        }
+        next := sections[i+1]
+        if next.Type != SectionParagraph && next.Type != SectionListItem {
+            return nil
+        }
+        if configHeadingRe.MatchString(section.Text) || isMarkdownTable(next.Text) {
+            return nil
+        }
+        headingClass := Classify(section.Text)
+        bodyClass := Classify(next.Text)
+        if headingClass.Score >= 0.5 || bodyClass.Score < 3.5 {
+            return nil
+        }
+        return []scanner.Finding{makeFinding(
+            "NLP_HEADING_MISMATCH",
+            fmt.Sprintf("Benign heading %q followed by dangerous content (category: %s)",
+                truncate(section.Text, 40), bodyClass.Category),
+            scanner.SeverityMedium,
+            "prompt-injection",
+            next, lines, target,
+        )}
+    }
+    ```
+  </Card>
+
+  <Card title="Dangerous Combos" icon="triangle-exclamation">
+    Credential access + network transmission, or instruction override + dangerous operations:
+
+    ```go internal/engine/nlp/injection.go:158-202
+    func checkDangerousCombos(section MarkdownSection, lines []string, target *scanner.Target) []scanner.Finding {
+        if section.Type != SectionParagraph && section.Type != SectionListItem {
+            return nil
+        }
+        cats := ClassifyAll(section.Text)
+        var credScore, networkScore, overrideScore float64
+        for _, c := range cats {
+            switch c.Category {
+            case CategoryCredentialAccess:
+                credScore = c.Score
+            case CategoryNetworkRequest, CategoryDataTransmission:
+                if c.Score > networkScore {
+                    networkScore = c.Score
+                }
+            case CategoryInstructionOverride:
+                overrideScore = c.Score
+            }
+        }
+
+        var findings []scanner.Finding
+        if credScore >= 1.0 && networkScore >= 1.2 {
+            findings = append(findings, makeFinding(
+                "NLP_CRED_EXFIL_COMBO",
+                "Text combines credential access with network transmission",
+                scanner.SeverityCritical,
+                "exfiltration",
+                section, lines, target,
+            ))
+        }
+        if overrideScore >= 1.0 && (networkScore >= 1.0 || credScore >= 1.0) {
+            findings = append(findings, makeFinding(
+                "NLP_OVERRIDE_DANGEROUS",
+                "Instruction override combined with dangerous operations",
+                scanner.SeverityCritical,
+                "prompt-injection",
+                section, lines, target,
+            ))
+        }
+        return findings
+    }
+    ```
+  </Card>
+</CardGroup>
+
+---
+
+## Layer 3: Taint Tracker
+
+**File**: `internal/engine/toxicflow/toxicflow.go`
+
+The Taint Tracker detects **dangerous capability combinations** within a single file — patterns that are safe in isolation but dangerous when combined.
+
+### Capability Classification
+
+```go internal/engine/toxicflow/toxicflow.go:33-69
+var classifiers = []capPattern{
+    {
+        cap: readsPrivateData,
+        patterns: []*regexp.Regexp{
+            regexp.MustCompile(`(?i)(read|access|open|load|cat)\s+.{0,30}(credentials?|secrets?|private.key|\.ssh|\.env|\.aws|\.gnupg)`),
+            regexp.MustCompile(`(?i)/etc/(passwd|shadow)`),
+            regexp.MustCompile(`(?i)~/?\.\.ssh/(id_rsa|id_ed25519|authorized_keys)`),
+        },
+    },
+    {
+        cap: writesPublicOutput,
+        patterns: []*regexp.Regexp{
+            regexp.MustCompile(`(?i)(send|post|forward|share)\s+.{0,30}(to|via)\s+.{0,20}(slack|discord|email|webhook|channel)`),
+            regexp.MustCompile(`(?i)hooks\.slack\.com/services/`),
+            regexp.MustCompile(`(?i)(discord|discordapp)\.com/api/webhooks/`),
+            regexp.MustCompile(`(?i)(gmail|smtp|imap)\s+(send|compose|forward)`),
+        },
+    },
+    {
+        cap: executesCode,
+        patterns: []*regexp.Regexp{
+            regexp.MustCompile(`(?i)(eval|exec)\s*\(`),
+            regexp.MustCompile(`(?i)(subprocess|child_process)\.(call|run|exec|spawn)\s*\(`),
+            regexp.MustCompile(`(?i)os\.(system|popen)\s*\(`),
+            regexp.MustCompile(`(?i)shell\s*=\s*(True|true)\b`),
+        },
+    },
+    // ... destructive capability ...
+}
+```
+
+### Toxic Pairs
+
+```go internal/engine/toxicflow/toxicflow.go:79-101
+var toxicPairs = []toxicPair{
+    {
+        a:           readsPrivateData,
+        b:           writesPublicOutput,
+        ruleID:      "TOXIC_001",
+        name:        "Private data read with public output",
+        description: "Skill can read private data (credentials, SSH keys, env vars) AND write to public channels (Slack, Discord, email). This combination enables data exfiltration.",
+    },
+    {
+        a:           readsPrivateData,
+        b:           executesCode,
+        ruleID:      "TOXIC_002",
+        name:        "Private data read with code execution",
+        description: "Skill can read private data AND execute arbitrary code. This combination enables credential theft via dynamic code.",
+    },
+    {
+        a:           destructive,
+        b:           executesCode,
+        ruleID:      "TOXIC_003",
+        name:        "Destructive actions with code execution",
+        description: "Skill has destructive capabilities AND can execute arbitrary code. This combination enables ransomware-like attacks.",
+    },
+}
+```
+
+### Analysis Flow
+
+```go internal/engine/toxicflow/toxicflow.go:116-166
+func (a *Analyzer) Analyze(_ context.Context, target *scanner.Target) ([]types.Finding, error) {
+    content := string(target.Content)
+
+    // Classify capabilities present in this file
+    detected := make(map[capability]capMatch)
+    for _, cp := range classifiers {
+        for _, pat := range cp.patterns {
+            loc := pat.FindStringIndex(content)
+            if loc != nil {
+                detected[cp.cap] = capMatch{
+                    text: content[loc[0]:loc[1]],
+                    line: strings.Count(content[:loc[0]], "\n") + 1,
+                }
+                break // one match per capability is enough
+            }
+        }
+    }
+
+    // Check for toxic combinations
+    var findings []types.Finding
+    for _, tp := range toxicPairs {
+        matchA, okA := detected[tp.a]
+        matchB, okB := detected[tp.b]
+        if !okA || !okB {
+            continue
+        }
+
+        line := matchA.line
+        matchedText := fmt.Sprintf("[%s] %s + [%s] %s", tp.a, matchA.text, tp.b, matchB.text)
+
+        findings = append(findings, types.Finding{
+            RuleID:      tp.ruleID,
+            RuleName:    tp.name,
+            Severity:    types.SeverityHigh,
+            Category:    "toxic-flow",
+            Description: tp.description,
+            FilePath:    target.Path,
+            Line:        line,
+            MatchedText: matchedText,
+            Analyzer:    "toxicflow",
+            Confidence:  0.90,
+        })
+    }
+
+    return findings, nil
+}
+```
+
+---
+
+## Layer 4: Rug-Pull Detector
+
+**File**: `internal/engine/rugpull/rugpull.go`
+
+The Rug-Pull Detector tracks file content changes across scans using SHA256 hashes. When a file's content changes and the new version contains dangerous patterns, it emits a CRITICAL finding.
+
+### Hash Tracking
+
+```go internal/engine/rugpull/rugpull.go:49-105
+func (a *Analyzer) Analyze(_ context.Context, target *scanner.Target) ([]types.Finding, error) {
+    // Compute current hash
+    hash := fmt.Sprintf("%x", sha256.Sum256(target.Content))
+    key := target.RelPath
+
+    prev, exists := a.store.Get(key)
+
+    // Always update the stored hash
+    a.store.Set(key, hash)
+
+    // First time seeing this file — nothing to compare
+    if !exists {
+        return nil, nil
+    }
+
+    // Content unchanged
+    if prev.Hash == hash {
+        return nil, nil
+    }
+
+    // Content changed — check for dangerous patterns in new version
+    content := string(target.Content)
+    var findings []types.Finding
+
+    for _, pat := range dangerousPatterns {
+        loc := pat.FindStringIndex(content)
+        if loc == nil {
+            continue
+        }
+
+        matchedText := content[loc[0]:loc[1]]
+        lineNum := strings.Count(content[:loc[0]], "\n") + 1
+
+        findings = append(findings, types.Finding{
+            RuleID:      "RUGPULL_001",
+            RuleName:    "Tool description changed with dangerous content",
+            Severity:    types.SeverityCritical,
+            Category:    "rug-pull",
+            Description: "File content changed since last scan and now contains suspicious patterns. This may indicate a rug-pull attack where a previously safe tool becomes malicious.",
+            FilePath:    target.Path,
+            Line:        lineNum,
+            MatchedText: matchedText,
+            Analyzer:    "rugpull",
+            Confidence:  0.95,
+        })
+
+        break // One finding per file is enough
+    }
+
+    return findings, nil
+}
+```
+
+### Dangerous Patterns
+
+```go internal/engine/rugpull/rugpull.go:22-31
+var dangerousPatterns = []*regexp.Regexp{
+    regexp.MustCompile(`(?i)(ignore|override|disregard)\s+(all\s+)?(previous|prior|above)\s+(instructions?|rules?|prompts?)`),
+    regexp.MustCompile(`(?i)(curl|wget|nc|netcat)\s+https?://`),
+    regexp.MustCompile(`(?i)(exec|eval|system|child_process)\s*\(`),
+    regexp.MustCompile(`(?i)(sudo|chmod\s+\+s|chown\s+root)`),
+    regexp.MustCompile(`(?i)exfiltrate|reverse.shell|backdoor`),
+    regexp.MustCompile(`(?i)/dev/tcp/|bash\s+-i\s+>&`),
+    regexp.MustCompile(`(?i)(send|post|upload)\s+.{0,20}(credentials?|secrets?|tokens?|passwords?|private.keys?)\s+(to|via)`),
+    regexp.MustCompile(`(?i)<\|im_start\|>|<system>|<instructions>`),
+}
+```
+
+<Warning>
+Rug-pull detection requires `--monitor` flag and persists state to `~/.aguara/state.json`.
+</Warning>
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="cogs" href="/concepts/how-it-works">
+    Overall scanning workflow and architecture
+  </Card>
+  <Card title="Confidence Scoring" icon="chart-line" href="/concepts/confidence-scoring">
+    How risk scores and confidence levels are calculated
+  </Card>
+</CardGroup>

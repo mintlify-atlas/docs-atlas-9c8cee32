@@ -1,97 +1,182 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Aguara Security Scanner"
+description: "Security scanner for AI agent skills and MCP servers with 177 detection rules across 13 categories"
 ---
 
-## Setting up
+<div style={{
+  background: 'linear-gradient(135deg, #0b0c0b 0%, #04631e 100%)',
+  padding: '4rem 2rem',
+  borderRadius: '4px',
+  border: '1px solid #04f441',
+  marginBottom: '3rem'
+}}>
+  <h1 style={{
+    fontSize: '48px',
+    fontFamily: 'Courier New, monospace',
+    fontWeight: 700,
+    color: '#04f441',
+    marginBottom: '1rem',
+    textAlign: 'center'
+  }}>
+    Aguara Security Scanner
+  </h1>
+  <p style={{
+    fontSize: '18px',
+    fontFamily: 'Courier New, monospace',
+    color: '#ffffff',
+    textAlign: 'center',
+    maxWidth: '800px',
+    margin: '0 auto',
+    lineHeight: '1.6'
+  }}>
+    Detect prompt injection, data exfiltration, and supply-chain attacks in AI agent skills and MCP servers before they reach production. 177 rules. 4-layer analysis. No API keys, no cloud, no LLM.
+  </p>
+</div>
 
-Get your documentation site up and running in minutes.
+## Why Aguara?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
+AI agents and MCP servers run code on your behalf. A single malicious skill file can exfiltrate credentials, inject prompts, or install backdoors. Aguara catches these threats **before deployment** with static analysis that requires no API keys, no cloud, and no LLM.
+
+<CardGroup cols={2}>
+  <Card title="177 Detection Rules" icon="shield-check">
+    Across 13 categories: prompt injection, data exfiltration, credential leaks, supply-chain attacks, MCP-specific threats, and more
+  </Card>
+  <Card title="4-Layer Analysis Engine" icon="layer-group">
+    Pattern matching, NLP-based markdown analysis, taint tracking, and rug-pull detection work together to catch threats
+  </Card>
+  <Card title="CI-Ready Integration" icon="circle-check">
+    JSON, SARIF, and Markdown output. GitHub Action with Code Scanning. Exit codes for pipeline control
+  </Card>
+  <Card title="Fully Offline" icon="lock">
+    Deterministic scans with no API keys, no cloud calls, no LLM. Same input, same output, every time
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+<Steps>
+  <Step title="Install Aguara">
+    <CodeGroup>
+    ```bash curl
+    curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+    ```
+    ```bash homebrew
+    brew install garagon/tap/aguara
+    ```
+    ```bash docker
+    docker run --rm -v "$(pwd)":/scan ghcr.io/garagon/aguara scan /scan
+    ```
+    ```bash go
+    go install github.com/garagon/aguara/cmd/aguara@latest
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Scan Your Skills">
+    Auto-discover and scan all MCP configs on your machine, or scan a specific directory:
+    ```bash
+    # Auto-discover and scan all MCP clients
+    aguara scan --auto
+
+    # Scan a skills directory
+    aguara scan .claude/skills/
+
+    # Only high and critical findings
+    aguara scan . --severity high
+    ```
+  </Step>
+  
+  <Step title="Review Findings">
+    Get actionable security findings with confidence scores, remediation guidance, and context:
+    ```bash
+    # Verbose mode (show descriptions, confidence scores, remediation)
+    aguara scan . --verbose
+
+    # CI mode (exit 1 on high+, no color)
+    aguara scan .claude/skills/ --ci
+    ```
+  </Step>
+</Steps>
+
+## Key Features
+
+<CardGroup cols={3}>
+  <Card title="MCP Discovery" icon="magnifying-glass" href="/advanced/mcp-discovery">
+    Auto-detect configs across 17 clients including Claude Desktop, Cursor, VS Code, Windsurf, and more
+  </Card>
+  <Card title="Confidence Scoring" icon="chart-line" href="/concepts/confidence-scoring">
+    Every finding carries a 0.0-1.0 confidence level for prioritizing triage and filtering noise
+  </Card>
+  <Card title="Custom Rules" icon="file-code" href="/rules/custom-rules">
+    Write custom detection rules in YAML without code
+  </Card>
+  <Card title="Go Library API" icon="code" href="/api/overview">
+    Embed Aguara in your own tools with the public Go API
+  </Card>
+  <Card title="Rug-Pull Detection" icon="eye" href="/advanced/rug-pull-detection">
+    Track file hashes across scans to catch tool descriptions that change after review
+  </Card>
+  <Card title="Multiple Outputs" icon="file-export" href="/advanced/output-formats">
+    Terminal, JSON, SARIF, and Markdown formats for different workflows
+  </Card>
+</CardGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Aguara using curl, Homebrew, Docker, or from source
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get scanning in under 2 minutes with our quickstart guide
+  </Card>
+  <Card title="CLI Usage" icon="terminal" href="/cli/scan">
+    Learn all CLI commands and flags for scanning and discovery
+  </Card>
+  <Card title="CI/CD Integration" icon="gears" href="/ci/github-actions">
+    Integrate Aguara into your CI/CD pipeline with GitHub Actions, GitLab CI, or Docker
+  </Card>
+</CardGroup>
+
+## Detection Categories
+
+<AccordionGroup>
+  <Accordion title="Prompt Injection (18 rules + NLP)">
+    Detects instruction overrides, role switching, delimiter injection, jailbreaks, fake system prompts, and event injection patterns
+  </Accordion>
+  
+  <Accordion title="Data Exfiltration (16 rules + NLP)">
+    Catches webhook exfil, DNS tunneling, sensitive file reads, environment variable leaks, and credential transmission
+  </Accordion>
+  
+  <Accordion title="Credential Leak (22 rules)">
+    Identifies API keys (OpenAI, AWS, GCP, Stripe, Anthropic, GitHub), private keys, database strings, and HMAC secrets
+  </Accordion>
+  
+  <Accordion title="Supply Chain (21 rules)">
+    Finds download-and-execute patterns, reverse shells, sandbox escape attempts, symlink attacks, and privilege escalation
+  </Accordion>
+  
+  <Accordion title="MCP Attack (16 rules)">
+    Detects tool injection, name shadowing, canonicalization bypass, capability escalation, and server manifest tampering
+  </Accordion>
+  
+  <Accordion title="Command Execution (15 rules)">
+    Identifies shell=True, eval, subprocess, child_process, PowerShell, and terminal multiplexer command injection
+  </Accordion>
+</AccordionGroup>
+
+<Card title="View All 177 Rules" icon="list" href="/rules/overview">
+  Browse the complete rule catalog with IDs, severity levels, and examples
 </Card>
 
-## Make it yours
+## Ecosystem
 
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Aguara MCP" icon="plug" href="/ecosystem/aguara-mcp">
+    MCP server that gives AI agents the ability to scan skills before installing them
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Aguara Watch" icon="tower-broadcast" href="/ecosystem/aguara-watch">
+    Continuously scans 28,000+ AI agent skills across 5 registries to track the threat landscape
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
-
-## Create beautiful pages
-
-Everything you need to create world-class documentation.
-
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
-
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+</CardGroup>

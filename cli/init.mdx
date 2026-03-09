@@ -1,0 +1,504 @@
+---
+title: aguara init
+description: Initialize Aguara configuration files
+---
+
+## Overview
+
+The `aguara init` command scaffolds configuration files for Aguara, including `.aguara.yml` config, `.aguaraignore` patterns, GitHub Actions workflows, and git pre-commit hooks.
+
+## Usage
+
+```bash
+aguara init [path] [flags]
+```
+
+### Examples
+
+```bash
+# Initialize in current directory
+aguara init
+
+# Initialize in specific directory
+aguara init ./my-project/
+
+# Create git pre-commit hook
+aguara init --hook
+
+# Only create GitHub Actions workflow
+aguara init --ci
+```
+
+## Arguments
+
+<ParamField path="path" type="string" default=".">
+  Directory to initialize. Defaults to current directory.
+  
+  ```bash
+  aguara init ./my-project/
+  ```
+</ParamField>
+
+## Flags
+
+<ParamField path="--hook" type="boolean" default="false">
+  Create a git pre-commit hook that runs Aguara scans before each commit.
+  
+  **Requires:** Directory must be a git repository (`.git/` must exist)
+  
+  ```bash
+  aguara init --hook
+  ```
+  
+  Creates: `.git/hooks/pre-commit` (executable)
+</ParamField>
+
+<ParamField path="--ci" type="boolean" default="false">
+  Only generate GitHub Actions workflow. Skip `.aguara.yml` and `.aguaraignore`.
+  
+  ```bash
+  aguara init --ci
+  ```
+  
+  Creates: `.github/workflows/aguara.yml`
+</ParamField>
+
+## Generated Files
+
+### Default mode (no flags)
+
+Creates three files:
+
+```bash
+$ aguara init
+
+  create .aguara.yml
+  create .aguaraignore
+  create .github/workflows/aguara.yml
+```
+
+### `.aguara.yml`
+
+Main configuration file:
+
+```yaml
+# Aguara security scanner configuration
+# https://github.com/garagon/aguara
+
+# Paths to scan (default: current directory)
+# paths:
+#   - .
+
+# File patterns to ignore
+ignore:
+  - "*.log"
+  - "vendor/"
+  - "node_modules/"
+  - ".git/"
+
+# Minimum severity to report: critical, high, medium, low, info
+severity: info
+
+# Exit with code 1 if findings at or above this severity
+# fail_on: high
+
+# Output format: terminal, json, sarif
+format: terminal
+
+# Additional rules directory
+# rules: custom-rules/
+
+# Per-rule overrides
+# rule_overrides:
+#   PROMPT_INJECTION_001:
+#     severity: medium
+#   EXFIL_005:
+#     disabled: true
+```
+
+### `.aguaraignore`
+
+Gitignore-style ignore patterns:
+
+```
+# Aguara ignore patterns
+# Files matching these patterns will be skipped during scanning
+
+# Dependencies
+vendor/
+node_modules/
+.venv/
+__pycache__/
+
+# Build artifacts
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Test coverage
+coverage/
+*.cover
+```
+
+### `.github/workflows/aguara.yml`
+
+GitHub Actions workflow with SARIF upload and PR comments:
+
+```yaml
+name: Aguara Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  security-events: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  aguara:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Aguara binary
+        uses: actions/cache@v4
+        with:
+          path: ./aguara
+          key: aguara-linux-amd64
+
+      - name: Install Aguara
+        run: |
+          if [ ! -f ./aguara ]; then
+            curl -sSL https://github.com/garagon/aguara/releases/latest/download/aguara-linux-amd64 -o aguara
+            chmod +x aguara
+          fi
+
+      - name: Run Aguara scan
+        id: scan
+        continue-on-error: true
+        run: ./aguara scan . --format sarif --output results.sarif --fail-on high
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('results.sarif', 'utf8'));
+            const results = sarif.runs[0].results || [];
+            const counts = {};
+            results.forEach(r => { counts[r.level] = (counts[r.level] || 0) + 1; });
+            const lines = ['## Aguara Security Scan', ''];
+            if (results.length === 0) {
+              lines.push('No security issues found.');
+            } else {
+              lines.push('| Level | Count |', '|-------|-------|');
+              for (const [level, count] of Object.entries(counts)) {
+                lines.push('| ' + level + ' | ' + count + ' |');
+              }
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join('\n')
+            });
+
+      - name: Fail on findings
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
+```
+
+### `.git/hooks/pre-commit` (with `--hook`)
+
+Git pre-commit hook:
+
+```bash
+#!/bin/sh
+# Aguara pre-commit hook
+echo "Running Aguara security scan..."
+aguara scan . --fail-on high --no-color
+exit $?
+```
+
+**Note:** This file is created with executable permissions (`chmod +x`).
+
+## Behavior
+
+### Existing files are skipped
+
+If a file already exists, it won't be overwritten:
+
+```bash
+$ aguara init
+
+  skip .aguara.yml (already exists)
+  create .aguaraignore
+  create .github/workflows/aguara.yml
+```
+
+### Directory creation
+
+Parent directories are created automatically:
+
+```bash
+# Creates ./my-project/ if it doesn't exist
+aguara init ./my-project/
+
+# Creates .github/workflows/ for workflow file
+aguara init --ci
+```
+
+### Git repository check (for `--hook`)
+
+The `--hook` flag requires a git repository:
+
+```bash
+$ aguara init --hook
+
+Error: no .git directory found in . (is this a git repository?)
+```
+
+**Solution:** Initialize git first:
+
+```bash
+git init
+aguara init --hook
+```
+
+## Use Cases
+
+### New project setup
+
+Initialize all Aguara files in a new project:
+
+```bash
+cd my-new-project/
+aguara init
+```
+
+### Git pre-commit scanning
+
+Block commits with high-severity findings:
+
+```bash
+aguara init --hook
+```
+
+Now every commit runs:
+```bash
+aguara scan . --fail-on high --no-color
+```
+
+To bypass the hook temporarily:
+```bash
+git commit --no-verify
+```
+
+### GitHub Actions integration
+
+Add Aguara to CI/CD pipeline:
+
+```bash
+aguara init --ci
+git add .github/workflows/aguara.yml
+git commit -m "Add Aguara security scanning"
+git push
+```
+
+The workflow:
+- Runs on every push and PR to `main`
+- Uploads SARIF results to GitHub Code Scanning
+- Comments on PRs with finding counts
+- Fails the build if high+ severity findings exist
+
+### Existing project adoption
+
+Add Aguara to an existing project:
+
+```bash
+# 1. Initialize config
+aguara init
+
+# 2. Run initial scan
+aguara scan .
+
+# 3. Adjust .aguara.yml and .aguaraignore as needed
+# 4. Commit changes
+git add .aguara.yml .aguaraignore .github/
+git commit -m "Add Aguara security scanner"
+```
+
+### Custom configuration location
+
+Initialize in a subdirectory:
+
+```bash
+aguara init ./backend/
+aguara init ./frontend/
+```
+
+Each directory gets its own `.aguara.yml` with independent settings.
+
+## Customization After Init
+
+### Adjust ignore patterns
+
+Edit `.aguaraignore` to skip large directories:
+
+```
+# Add your own patterns
+docs/
+tests/fixtures/
+*.generated.ts
+```
+
+### Configure severity thresholds
+
+Edit `.aguara.yml`:
+
+```yaml
+# Only report high and critical
+severity: high
+
+# Fail builds on critical only
+fail_on: critical
+```
+
+### Disable specific rules
+
+Edit `.aguara.yml`:
+
+```yaml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    disabled: true  # Too many false positives in our docs
+  EXFIL_005:
+    severity: low   # Lower severity for our use case
+```
+
+### Add custom rules
+
+Edit `.aguara.yml`:
+
+```yaml
+rules: ./security-rules/
+```
+
+See [Writing Custom Rules](/guides/custom-rules) for details.
+
+## GitHub Actions Workflow Details
+
+The generated workflow includes:
+
+### Features
+
+1. **Binary caching**: Caches Aguara binary to speed up runs
+2. **SARIF upload**: Integrates with GitHub Code Scanning
+3. **PR comments**: Posts finding summaries on pull requests
+4. **Fail on high**: Fails the workflow if high+ findings exist
+5. **Permissions**: Minimal required permissions declared
+
+### Customizing the workflow
+
+**Change failure threshold:**
+```yaml
+run: ./aguara scan . --format sarif --output results.sarif --fail-on critical
+```
+
+**Scan specific directories:**
+```yaml
+run: ./aguara scan ./src/ --format sarif --output results.sarif --fail-on high
+```
+
+**Add changed-files-only scan:**
+```yaml
+run: ./aguara scan --changed --fail-on medium .
+```
+
+**Disable PR comments:**
+Remove the "Comment on PR" step.
+
+## Pre-commit Hook Details
+
+The generated hook:
+
+```bash
+#!/bin/sh
+# Aguara pre-commit hook
+echo "Running Aguara security scan..."
+aguara scan . --fail-on high --no-color
+exit $?
+```
+
+### Behavior
+
+- Runs `aguara scan .` before every commit
+- Fails (blocks commit) if high or critical findings exist
+- Uses `--no-color` for consistent terminal output
+
+### Customizing the hook
+
+**Scan only changed files:**
+```bash
+aguara scan --changed --fail-on high --no-color
+```
+
+**Different failure threshold:**
+```bash
+aguara scan . --fail-on critical --no-color
+```
+
+**Verbose output:**
+```bash
+aguara scan . --fail-on high -v
+```
+
+### Bypassing the hook
+
+Temporarily skip the hook:
+```bash
+git commit --no-verify -m "WIP: temporary bypass"
+```
+
+### Removing the hook
+
+```bash
+rm .git/hooks/pre-commit
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| 0 | Files created successfully |
+| 1 | Error creating files or directories |
+
+## Related Commands
+
+- [aguara scan](/cli/scan) - Run security scans
+- [aguara list-rules](/cli/list-rules) - View available detection rules

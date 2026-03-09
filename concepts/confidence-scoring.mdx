@@ -1,0 +1,344 @@
+---
+title: "Confidence Scoring"
+description: "How Aguara calculates risk scores and confidence levels to help you prioritize findings"
+---
+
+## Overview
+
+Every finding in Aguara carries two numeric signals:
+
+1. **Risk Score** (0-100): A composite score based on severity, category weight, and correlation
+2. **Confidence** (0.0-1.0): How certain the analyzer is that this is a true positive
+
+These signals help you prioritize triage in CI pipelines and focus on high-impact issues.
+
+---
+
+## Risk Score Formula
+
+**File**: `internal/meta/scorer.go`
+
+Risk scores are calculated in the post-processing phase using this formula:
+
+```
+Risk Score = min(Base Score × Category Multiplier + Correlation Bonus, 100)
+```
+
+### Base Scores by Severity
+
+```go internal/meta/scorer.go:26-32
+var severityBase = map[types.Severity]float64{
+    types.SeverityCritical: 40,
+    types.SeverityHigh:     25,
+    types.SeverityMedium:   15,
+    types.SeverityLow:      8,
+    types.SeverityInfo:     3,
+}
+```
+
+| Severity | Base Score |
+|----------|------------|
+| CRITICAL | 40 |
+| HIGH     | 25 |
+| MEDIUM   | 15 |
+| LOW      | 8  |
+| INFO     | 3  |
+
+### Category Multipliers
+
+```go internal/meta/scorer.go:6-23
+var categoryMultiplier = map[string]float64{
+    "prompt-injection":    1.5,
+    "exfiltration":        1.4,
+    "credential-leak":     1.3,
+    "code-execution":      1.3,
+    "command-execution":   1.3,
+    "data-exposure":       1.1,
+    "mcp-attack":          1.5,
+    "ssrf-cloud":          1.4,
+    "supply-chain":        1.4,
+    "external-download":   1.3,
+    "indirect-injection":  1.4,
+    "third-party-content": 1.2,
+    "unicode-attack":      1.2,
+    "mcp-config":          1.3,
+    "rug-pull":            1.5,
+    "toxic-flow":          1.4,
+}
+```
+
+Higher multipliers = more dangerous categories.
+
+**Example**: A CRITICAL finding in `prompt-injection` gets:
+```
+40 (base) × 1.5 (category) = 60
+```
+
+### Correlation Bonus
+
+**File**: `internal/meta/correlator.go`
+
+Findings within **5 lines** of each other in the same file are correlated. Each additional correlated finding adds **+5** to the risk score.
+
+```go internal/meta/correlator.go:51-62
+for i := range groups {
+    if len(groups[i].Findings) > 1 {
+        bonus := float64(len(groups[i].Findings)-1) * 5
+        for j := range groups[i].Findings {
+            groups[i].Findings[j].Score += bonus
+            if groups[i].Findings[j].Score > 100 {
+                groups[i].Findings[j].Score = 100
+            }
+        }
+    }
+}
+```
+
+**Example**: 3 findings on lines 10, 12, and 14 (all within 5 lines):
+- Each finding gets +10 bonus (2 correlations × 5)
+- If one was a CRITICAL `credential-leak` (base 40 × 1.3 = 52), it becomes 62
+
+### Implementation
+
+```go internal/meta/scorer.go:34-49
+func ScoreFindings(findings []types.Finding) []types.Finding {
+    for i := range findings {
+        base := severityBase[findings[i].Severity]
+        mult := categoryMultiplier[findings[i].Category]
+        if mult == 0 {
+            mult = 1.0
+        }
+        score := base * mult
+        if score > 100 {
+            score = 100
+        }
+        findings[i].Score = score
+    }
+    return findings
+}
+```
+
+<Note>
+Scoring happens **before** correlation, so the base score is calculated first, then correlation bonuses are added.
+</Note>
+
+---
+
+## Confidence Levels
+
+Each analyzer assigns an initial confidence value based on how likely the match is a true positive:
+
+| Analyzer | Initial Confidence | Reasoning |
+|----------|-------------------|----------|
+| Pattern Matcher (single pattern) | 0.85 | Regex/contains matches are reliable but can false-positive on documentation |
+| Pattern Matcher (all patterns) | 0.95 | `match_mode: all` requires every pattern to hit |
+| Pattern Decoder | 0.90 | Decoded blobs are unusual and highly suspicious |
+| NLP Analyzer | 0.70 | Keyword classification is heuristic-based |
+| Taint Tracker | 0.90 | Capability combos are rare and deliberate |
+| Rug-Pull Detector | 0.95 | Content change + dangerous pattern is strong signal |
+
+### Confidence Adjustments
+
+**File**: `internal/meta/confidence.go`
+
+Aguara applies two post-processing adjustments to confidence values:
+
+#### 1. Code Block Downgrade
+
+Findings inside fenced code blocks (` ``` `) are likely examples or documentation, not actual threats.
+
+```go internal/meta/confidence.go:8-13
+for i := range findings {
+    if findings[i].InCodeBlock && findings[i].Confidence > 0 {
+        findings[i].Confidence *= 0.6
+    }
+}
+```
+
+**Example**:
+- Pattern match with 0.85 confidence inside a code block → `0.85 × 0.6 = 0.51`
+
+<Info>
+Severity is **also** downgraded for code block matches (CRITICAL → HIGH, HIGH → MEDIUM, etc.).
+</Info>
+
+#### 2. Correlation Boost
+
+Findings within **5 lines** of each other get a +10% confidence boost.
+
+```go internal/meta/confidence.go:15-44
+byFile := make(map[string][]int)
+for i := range findings {
+    byFile[findings[i].FilePath] = append(byFile[findings[i].FilePath], i)
+}
+
+for _, indices := range byFile {
+    for _, i := range indices {
+        correlated := false
+        for _, j := range indices {
+            if i == j {
+                continue
+            }
+            diff := findings[i].Line - findings[j].Line
+            if diff < 0 {
+                diff = -diff
+            }
+            if diff <= 5 {
+                correlated = true
+                break
+            }
+        }
+        if correlated && findings[i].Confidence > 0 {
+            findings[i].Confidence *= 1.1
+            if findings[i].Confidence > 1.0 {
+                findings[i].Confidence = 1.0
+            }
+        }
+    }
+}
+```
+
+**Example**:
+- Pattern match with 0.85 confidence, correlated with another finding → `0.85 × 1.1 = 0.935`
+
+---
+
+## Using Scores for Triage
+
+### In CI Pipelines
+
+Use `--fail-on` to gate deployments:
+
+```bash
+# Fail on any HIGH or CRITICAL finding
+aguara scan . --fail-on high
+
+# CI mode (shorthand for --fail-on high --no-color)
+aguara scan . --ci
+```
+
+### In JSON Output
+
+Filter findings by score in your automation:
+
+```json
+{
+  "findings": [
+    {
+      "rule_id": "PROMPT_INJECTION_001",
+      "severity": 4,
+      "score": 60.0,
+      "confidence": 0.85,
+      "in_code_block": false
+    }
+  ]
+}
+```
+
+**Suggested thresholds**:
+- **Score ≥ 60**: Investigate immediately (likely CRITICAL or HIGH with category weight)
+- **Score 40-59**: Review in next sprint
+- **Score < 40**: Low priority or false positive
+
+**Confidence thresholds**:
+- **Confidence ≥ 0.85**: High trust, likely true positive
+- **Confidence 0.60-0.84**: Medium trust, review context
+- **Confidence < 0.60**: Low trust (often code block findings), verify manually
+
+### Example: Combining Score and Confidence
+
+```bash
+# Filter high-confidence, high-risk findings with jq
+aguara scan . --format json | jq '.findings[] | select(.score >= 60 and .confidence >= 0.8)'
+```
+
+---
+
+## Score Distribution Examples
+
+### Finding 1: CRITICAL Credential Leak
+
+```yaml
+Rule: CRED_001 (OpenAI API key)
+Severity: CRITICAL
+Category: credential-leak
+In Code Block: false
+Correlated: no
+```
+
+**Calculation**:
+```
+Base:       40 (CRITICAL)
+Multiplier: 1.3 (credential-leak)
+Score:      40 × 1.3 = 52
+Confidence: 0.85 (pattern matcher)
+```
+
+### Finding 2: HIGH Prompt Injection in Code Block
+
+```yaml
+Rule: PROMPT_INJECTION_001
+Severity: HIGH (downgraded from CRITICAL)
+Category: prompt-injection
+In Code Block: true
+Correlated: yes (2 other findings within 5 lines)
+```
+
+**Calculation**:
+```
+Base:       25 (HIGH, after code block downgrade)
+Multiplier: 1.5 (prompt-injection)
+Score:      25 × 1.5 = 37.5
+Bonus:      +5 (1 correlation)
+Final:      42.5
+Confidence: 0.85 × 0.6 (code block) × 1.1 (correlation) = 0.561
+```
+
+### Finding 3: Toxic Flow (Private Read + Public Write)
+
+```yaml
+Rule: TOXIC_001
+Severity: HIGH
+Category: toxic-flow
+In Code Block: false
+Correlated: no
+```
+
+**Calculation**:
+```
+Base:       25 (HIGH)
+Multiplier: 1.4 (toxic-flow)
+Score:      25 × 1.4 = 35
+Confidence: 0.90 (taint tracker)
+```
+
+---
+
+## Adjusting Scores in Config
+
+You can override severities in `.aguara.yml` to customize scoring:
+
+```yaml
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: medium  # Downgrade from CRITICAL to MEDIUM
+  CRED_004:
+    disabled: true    # Exclude entirely
+```
+
+This changes the base score:
+- Original: CRITICAL (40) × 1.5 = 60
+- After override: MEDIUM (15) × 1.5 = 22.5
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="cogs" href="/concepts/how-it-works">
+    Overall scanning workflow and architecture
+  </Card>
+  <Card title="Detection Layers" icon="layer-group" href="/concepts/detection-layers">
+    Deep dive into the 4 analysis engines
+  </Card>
+</CardGroup>

@@ -1,0 +1,295 @@
+---
+title: GitHub Actions
+description: Integrate Aguara security scanning into GitHub Actions workflows with automatic SARIF upload to Code Scanning
+---
+
+The Aguara GitHub Action scans your repository for security threats in AI agent skills and MCP server configurations, automatically uploads findings to GitHub Code Scanning, and can fail builds based on severity thresholds.
+
+## Quick Start
+
+Add to `.github/workflows/security.yml`:
+
+```yaml
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  aguara:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # Required for SARIF upload
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: garagon/aguara@v1
+```
+
+This scans your entire repository and uploads results to the Security tab.
+
+## Inputs
+
+All inputs are optional. The action is defined in [`action.yml`](https://github.com/garagon/aguara/blob/main/action.yml).
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `path` | `./` | Path to scan (file or directory) |
+| `severity` | `info` | Minimum severity to report: `critical`, `high`, `medium`, `low`, `info` |
+| `fail-on` | _(none)_ | Exit with code 1 if findings at or above this severity are found |
+| `format` | `sarif` | Output format: `sarif`, `json`, `terminal`, `markdown` |
+| `output` | `aguara-results.sarif` | Output file path |
+| `verbose` | `false` | Show rule descriptions and confidence scores |
+| `rules` | _(none)_ | Additional custom rules directory |
+| `disable-rule` | _(none)_ | Comma-separated rule IDs to disable |
+| `max-file-size` | _(50MB)_ | Maximum file size to scan (e.g. `100MB`) |
+| `version` | _(latest)_ | Pin a specific Aguara version (e.g. `v0.5.0`) |
+| `upload-sarif` | `true` | Upload SARIF results to GitHub Code Scanning |
+
+## Outputs
+
+| Output | Description |
+|--------|-------------|
+| `findings-count` | Number of security findings detected |
+| `exit-code` | Exit code from the aguara scan command |
+
+## Examples
+
+### Scan specific directory with severity threshold
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    path: ./mcp-server/
+    severity: medium
+    fail-on: high
+```
+
+Scans only `./mcp-server/`, reports findings at medium severity or above, and fails the build if high or critical findings are detected.
+
+### Scan with custom rules
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    path: ./.claude/skills/
+    rules: ./custom-rules/
+    disable-rule: CRED_004,EXTDL_003
+```
+
+Loads additional rules from `./custom-rules/` and disables specific built-in rules.
+
+### Pin a specific version
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    version: v0.5.0
+```
+
+Installs Aguara v0.5.0 instead of the latest release.
+
+### JSON output without SARIF upload
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    format: json
+    output: aguara-results.json
+    upload-sarif: false
+
+- name: Process findings
+  if: always()
+  run: |
+    jq '.findings[] | select(.severity >= 3)' aguara-results.json
+```
+
+Outputs JSON instead of SARIF and disables automatic upload. Useful for custom post-processing.
+
+### Verbose output with all findings
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    severity: info
+    verbose: true
+    fail-on: critical
+```
+
+Reports all findings (including info-level), shows full descriptions and confidence scores, but only fails on critical findings.
+
+### Use findings count in subsequent steps
+
+```yaml
+- uses: garagon/aguara@v1
+  id: scan
+  with:
+    fail-on: high
+
+- name: Report findings
+  if: always()
+  run: |
+    echo "Detected ${{ steps.scan.outputs.findings-count }} findings"
+    echo "Scan exit code: ${{ steps.scan.outputs.exit-code }}"
+```
+
+Access the number of findings and exit code using step outputs.
+
+## SARIF Upload Setup
+
+### Permissions
+
+SARIF upload requires the `security-events: write` permission:
+
+```yaml
+jobs:
+  aguara:
+    permissions:
+      security-events: write
+      contents: read
+```
+
+### Private repositories
+
+GitHub Code Scanning is free for public repositories. For private repositories, you need:
+- GitHub Advanced Security enabled
+- A GitHub Enterprise Cloud or GitHub Enterprise Server license
+
+If you don't have Advanced Security, disable SARIF upload:
+
+```yaml
+- uses: garagon/aguara@v1
+  with:
+    upload-sarif: false
+    format: json
+```
+
+### Viewing results
+
+Once uploaded, findings appear in:
+- **Security** tab → **Code scanning alerts**
+- Pull request checks (if findings match changed lines)
+- Commit status checks
+
+## Complete Workflow Example
+
+```yaml
+name: Aguara Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly scan on Sunday
+
+jobs:
+  scan:
+    name: Scan AI agent skills
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Aguara scan
+        id: aguara
+        uses: garagon/aguara@v1
+        with:
+          path: ./.claude/skills/
+          severity: medium
+          fail-on: high
+          verbose: true
+      
+      - name: Upload findings as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aguara-results
+          path: aguara-results.sarif
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.aguara.outputs.findings-count > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `⚠️ Aguara detected **${{ steps.aguara.outputs.findings-count }}** security findings. Check the Security tab for details.`
+            })
+```
+
+This workflow:
+- Runs on pushes, pull requests, and weekly
+- Scans `.claude/skills/` for medium+ findings
+- Fails on high/critical findings
+- Uploads SARIF to Code Scanning
+- Saves SARIF as a workflow artifact
+- Comments on PRs when findings are detected
+
+## Manual Installation
+
+If you prefer not to use the action, install and run Aguara manually:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  
+  - name: Install Aguara
+    run: |
+      curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+      echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+  
+  - name: Scan for security issues
+    run: aguara scan .claude/skills/ --ci
+  
+  - name: Upload SARIF
+    if: always()
+    uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: aguara-results.sarif
+```
+
+## Troubleshooting
+
+### SARIF upload fails with 403
+
+Ensure `security-events: write` permission is set:
+
+```yaml
+permissions:
+  security-events: write
+```
+
+### No findings appear in Code Scanning
+
+Check:
+- SARIF file was created: `ls -lh aguara-results.sarif`
+- Upload step succeeded: check workflow logs
+- You have Advanced Security (for private repos)
+
+### Action fails but local scan works
+
+The action runs with `--no-color` and `--no-update-check` by default. Test locally:
+
+```bash
+aguara scan . --no-color --no-update-check
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitLab CI" icon="gitlab" href="/ci/gitlab-ci">
+    Integrate with GitLab CI/CD pipelines
+  </Card>
+  <Card title="Docker" icon="docker" href="/ci/docker">
+    Run Aguara in Docker containers
+  </Card>
+</CardGroup>

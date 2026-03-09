@@ -1,0 +1,261 @@
+---
+title: Configuration File
+description: Configure Aguara using .aguara.yml for project-wide settings
+---
+
+Aguara supports configuration via a `.aguara.yml` or `.aguara.yaml` file placed in your project root. This allows you to define scan settings, ignore patterns, rule overrides, and more without passing flags on every command.
+
+## File Location
+
+Aguara searches for configuration files in this order:
+
+1. `.aguara.yml` in the target directory (or parent directory if scanning a file)
+2. `.aguara.yaml` in the target directory
+
+If no configuration file is found, Aguara uses default settings.
+
+<Note>
+The config file must be under 1 MB in size.
+</Note>
+
+## Configuration Schema
+
+### Complete Example
+
+```yaml .aguara.yml
+# Paths to scan (default: current directory)
+paths:
+  - .claude/skills/
+  - .config/mcp/
+
+# File patterns to ignore (see ignore patterns page for details)
+ignore:
+  - "*.log"
+  - "vendor/**"
+  - "node_modules/**"
+  - ".git/"
+
+# Minimum severity to report: critical, high, medium, low, info
+severity: info
+
+# Exit with code 1 if findings at or above this severity
+fail_on: high
+
+# Output format: terminal, json, sarif, markdown
+format: terminal
+
+# Additional custom rules directory
+rules: custom-rules/
+
+# Rule IDs to disable completely
+disable_rules:
+  - PROMPT_INJECTION_001
+  - EXFIL_005
+
+# Per-rule overrides (severity or disable)
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: medium
+  CRED_004:
+    severity: low
+  EXTDL_004:
+    disabled: true
+
+# Maximum file size to scan (in bytes)
+max_file_size: 104857600  # 100 MB
+```
+
+### Configuration Options
+
+<ParamField path="paths" type="string[]" default="[current directory]">
+  List of paths to scan. If not specified, Aguara scans the current directory.
+  
+  ```yaml
+  paths:
+    - .claude/skills/
+    - mcp-servers/
+  ```
+</ParamField>
+
+<ParamField path="ignore" type="string[]" default="[]">
+  Glob patterns for files and directories to ignore during scanning. Supports `*`, `?`, `[...]`, and `**` for recursive matching.
+  
+  ```yaml
+  ignore:
+    - "vendor/**"
+    - "*.log"
+    - "test/fixtures/**"
+  ```
+  
+  <Note>
+  These patterns are in addition to `.aguaraignore`. See [Ignore Patterns](/configuration/ignore-patterns) for details.
+  </Note>
+</ParamField>
+
+<ParamField path="severity" type="string" default="info">
+  Minimum severity level to report. Valid values: `critical`, `high`, `medium`, `low`, `info`.
+  
+  ```yaml
+  severity: medium  # only show medium, high, and critical findings
+  ```
+</ParamField>
+
+<ParamField path="fail_on" type="string" default="(none)">
+  Severity threshold that causes Aguara to exit with code 1. If any findings at or above this level are found, the scan fails.
+  
+  ```yaml
+  fail_on: high  # fail CI builds if high or critical findings detected
+  ```
+</ParamField>
+
+<ParamField path="format" type="string" default="terminal">
+  Output format for scan results. Valid values: `terminal`, `json`, `sarif`, `markdown`.
+  
+  ```yaml
+  format: json
+  ```
+</ParamField>
+
+<ParamField path="rules" type="string" default="(none)">
+  Path to a directory containing custom rule YAML files. These rules are loaded in addition to Aguara's built-in rules.
+  
+  ```yaml
+  rules: .aguara/custom-rules/
+  ```
+</ParamField>
+
+<ParamField path="disable_rules" type="string[]" default="[]">
+  List of rule IDs to disable completely. Disabled rules are not evaluated during scanning.
+  
+  ```yaml
+  disable_rules:
+    - PROMPT_INJECTION_001
+    - CRED_004
+  ```
+  
+  <Note>
+  This is different from `rule_overrides[<id>].disabled`, but has the same effect. Use whichever syntax you prefer.
+  </Note>
+</ParamField>
+
+<ParamField path="rule_overrides" type="object" default="{}">
+  Per-rule configuration to change severity levels or disable specific rules. See [Rule Overrides](/configuration/rule-overrides) for details.
+  
+  ```yaml
+  rule_overrides:
+    PROMPT_INJECTION_001:
+      severity: medium  # downgrade from critical to medium
+    EXFIL_005:
+      disabled: true    # disable this rule
+  ```
+</ParamField>
+
+<ParamField path="max_file_size" type="integer" default="52428800 (50 MB)">
+  Maximum file size in bytes that Aguara will scan. Files larger than this are skipped.
+  
+  **Range:** 1 MB (1048576 bytes) to 500 MB (524288000 bytes)
+  
+  ```yaml
+  max_file_size: 104857600  # 100 MB
+  ```
+  
+  <Note>
+  You can also set this using the `--max-file-size` flag with human-readable units like `100MB` or `1GB`.
+  </Note>
+</ParamField>
+
+## CLI Flag Precedence
+
+Command-line flags always override configuration file values. For example:
+
+```bash
+# Config file sets severity: medium
+# But this command overrides it to high
+aguara scan . --severity high
+```
+
+**Override priority (highest to lowest):**
+1. CLI flags (`--severity`, `--format`, etc.)
+2. `.aguara.yml` configuration file
+3. Default values
+
+## Creating a Config File
+
+Use the `init` command to scaffold a `.aguara.yml` file with sensible defaults:
+
+```bash
+aguara init
+```
+
+This creates:
+- `.aguara.yml` with common configuration options
+- `.aguaraignore` with standard ignore patterns
+- `.github/workflows/aguara.yml` GitHub Actions workflow
+
+<Tip>
+Use `aguara init --ci` to generate only the GitHub Actions workflow without config files.
+</Tip>
+
+## Validation
+
+Aguara validates configuration at load time:
+
+- **Invalid severity values** → warning, defaults to `info`
+- **Invalid format values** → warning, defaults to `terminal`
+- **Non-existent rules directory** → error
+- **max_file_size out of range** → error
+- **Config file over 1 MB** → error
+
+Warnings are printed to stderr but do not stop execution.
+
+## Example Configurations
+
+### Minimal Config
+
+```yaml .aguara.yml
+severity: medium
+fail_on: high
+```
+
+### CI-Optimized Config
+
+```yaml .aguara.yml
+severity: medium
+fail_on: high
+format: sarif
+ignore:
+  - "vendor/**"
+  - "node_modules/**"
+  - "test/fixtures/**"
+```
+
+### Development Config
+
+```yaml .aguara.yml
+severity: info
+format: terminal
+ignore:
+  - "*.log"
+  - ".venv/**"
+  - "dist/**"
+rule_overrides:
+  CRED_004:  # Allow test API keys
+    severity: low
+```
+
+### Security-Focused Config
+
+```yaml .aguara.yml
+severity: low
+fail_on: medium
+max_file_size: 10485760  # 10 MB - reject large files
+rule_overrides:
+  PROMPT_INJECTION_001:
+    severity: critical  # upgrade importance
+```
+
+## Related
+
+- [Ignore Patterns](/configuration/ignore-patterns) - Learn about `.aguaraignore` and glob patterns
+- [Rule Overrides](/configuration/rule-overrides) - Customize rule behavior
+- [Inline Ignore](/configuration/inline-ignore) - Suppress findings in source files

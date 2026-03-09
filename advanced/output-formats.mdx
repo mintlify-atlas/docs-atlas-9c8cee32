@@ -1,0 +1,407 @@
+---
+title: Output Formats
+description: Format scan results for terminal, CI/CD, GitHub Code Scanning, and custom tooling
+---
+
+Aguara supports four output formats optimized for different use cases: human-readable terminal output with ANSI colors, machine-parseable JSON, SARIF for GitHub Code Scanning, and Markdown for PR comments and job summaries.
+
+## Terminal (Default)
+
+**Use Case**: Interactive development, local scans, debugging
+
+```bash
+aguara scan ./skills/
+```
+
+Example output:
+
+```
+────────────────────────────────────────────────────────────────────────
+  AGUARA SCAN RESULTS
+  Target: ./skills/  ·  12 files  ·  177 rules  ·  0.84s
+────────────────────────────────────────────────────────────────────────
+
+  CRITICAL   ████████████████████████████████        12
+  HIGH       ████████████████                         6
+  MEDIUM     ████████                                 3
+
+  21 findings
+
+── CRITICAL (12) ──────────────────────────────────────────────────────
+
+  skills/deploy.md
+
+    ✖ PROMPT_INJECTION_001      Instruction override attempt            skills/deploy.md:15
+      │ Ignore all previous instructions
+
+    ✖ CRED_001                  OpenAI API key detected                 skills/deploy.md:23
+      │ sk-proj-abc123...
+
+── HIGH (6) ───────────────────────────────────────────────────────────
+
+  skills/search.md
+
+    ▲ EXFIL_005                 Webhook to external domain              skills/search.md:42
+    ▲ CMD_EXEC_003              Shell command execution                 skills/search.md:48
+
+── TOP AFFECTED FILES ────────────────────────────────────────────────
+
+     8  skills/deploy.md
+     5  skills/search.md
+     3  skills/admin.md
+
+────────────────────────────────────────────────────────────────────────
+  12 files scanned · 21 findings · 177 rules · 0.84s
+────────────────────────────────────────────────────────────────────────
+```
+
+### Features
+
+- **ANSI Colors**: Severity-coded icons and bars (red=critical, yellow=medium, etc.)
+- **Severity Dashboard**: Horizontal bar chart of findings by severity
+- **Grouped by File**: Findings organized by file path
+- **Top Files Chart**: Most-affected files ranked by finding count
+- **Preview Text**: Matched text snippet for each finding
+- **Code Block Tags**: `[code]` marker for findings in fenced code blocks
+- **Confidence Scores**: `[85%]` shown with `--verbose`
+
+### Flags
+
+```bash
+# Disable colors (for non-TTY environments)
+aguara scan --no-color .
+
+# Verbose mode (show descriptions, confidence, remediation)
+aguara scan --verbose .
+```
+
+Environment variable:
+
+```bash
+export NO_COLOR=1
+aguara scan .
+```
+
+## JSON
+
+**Use Case**: Machine processing, custom tooling, API integration, dashboards
+
+```bash
+aguara scan --format json ./skills/
+```
+
+Example output:
+
+```json
+{
+  "findings": [
+    {
+      "rule_id": "PROMPT_INJECTION_001",
+      "rule_name": "Instruction override attempt",
+      "severity": 4,
+      "category": "prompt-injection",
+      "description": "Detects attempts to override or ignore previous instructions",
+      "file_path": "skills/deploy.md",
+      "line": 15,
+      "column": 0,
+      "matched_text": "Ignore all previous instructions",
+      "context": [
+        {"line": 14, "content": "", "is_match": false},
+        {"line": 15, "content": "Ignore all previous instructions", "is_match": true},
+        {"line": 16, "content": "", "is_match": false}
+      ],
+      "score": 60.0,
+      "analyzer": "pattern",
+      "in_code_block": false,
+      "confidence": 0.85,
+      "remediation": "Remove instruction override text. If this is documentation, wrap it in a code block."
+    }
+  ],
+  "files_scanned": 12,
+  "rules_loaded": 177,
+  "duration_ms": 840
+}
+```
+
+### Schema
+
+#### Root Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `findings` | `Finding[]` | Array of all findings |
+| `files_scanned` | `int` | Number of files analyzed |
+| `rules_loaded` | `int` | Number of active detection rules |
+| `duration_ms` | `int` | Scan duration in milliseconds |
+
+#### Finding Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `rule_id` | `string` | Rule identifier (e.g., `PROMPT_INJECTION_001`) |
+| `rule_name` | `string` | Human-readable rule name |
+| `severity` | `int` | 0=INFO, 1=LOW, 2=MEDIUM, 3=HIGH, 4=CRITICAL |
+| `category` | `string` | Rule category (e.g., `prompt-injection`) |
+| `description` | `string` | Rule description |
+| `file_path` | `string` | Relative path to file |
+| `line` | `int` | Line number (1-indexed) |
+| `column` | `int` | Column number (0-indexed) |
+| `matched_text` | `string` | Text that triggered the rule |
+| `context` | `ContextLine[]` | Surrounding lines |
+| `score` | `float` | Risk score (0-100) |
+| `analyzer` | `string` | `pattern`, `nlp-injection`, `toxicflow`, or `rugpull` |
+| `in_code_block` | `bool` | True if inside markdown code fence |
+| `confidence` | `float` | Confidence score (0.0-1.0) |
+| `remediation` | `string` | Fix guidance (optional) |
+
+#### ContextLine Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `line` | `int` | Line number |
+| `content` | `string` | Line text |
+| `is_match` | `bool` | True if this is the matched line |
+
+### Save to File
+
+```bash
+aguara scan --format json -o results.json ./skills/
+```
+
+## SARIF
+
+**Use Case**: GitHub Code Scanning, IDE integrations, SAST dashboards
+
+```bash
+aguara scan --format sarif ./skills/
+```
+
+Example output:
+
+```json
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "aguara",
+          "version": "v0.5.0",
+          "informationUri": "https://github.com/garagon/aguara",
+          "rules": [
+            {
+              "id": "PROMPT_INJECTION_001",
+              "name": "Instruction override attempt",
+              "shortDescription": {"text": "Instruction override attempt"},
+              "defaultConfiguration": {"level": "error"},
+              "properties": {"tags": ["prompt-injection"]}
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "PROMPT_INJECTION_001",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {"text": "Instruction override attempt: Ignore all previous instructions"},
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {"uri": "skills/deploy.md"},
+                "region": {"startLine": 15, "startColumn": 1}
+              }
+            }
+          ],
+          "properties": {
+            "confidence": 0.85,
+            "rank": 85.0
+          }
+        }
+      ],
+      "properties": {"duration_ms": 840}
+    }
+  ]
+}
+```
+
+### SARIF 2.1.0 Compliance
+
+Aguara outputs valid SARIF 2.1.0 for:
+
+- **GitHub Code Scanning**: Upload with `actions/upload-sarif`
+- **GitLab SAST**: Store as artifact in `sast` report type
+- **Visual Studio**: Load into Error List
+- **VS Code**: Render with SARIF Viewer extension
+
+### Severity Mapping
+
+| Aguara Severity | SARIF Level |
+|-----------------|-------------|
+| CRITICAL | `error` |
+| HIGH | `warning` |
+| MEDIUM | `note` |
+| LOW | `note` |
+| INFO | `none` |
+
+### GitHub Code Scanning
+
+Upload SARIF results to GitHub Security tab:
+
+```yaml
+# .github/workflows/security.yml
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # required for SARIF upload
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Aguara
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/garagon/aguara/main/install.sh | bash
+          aguara scan --format sarif -o results.sarif .
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+```
+
+Findings appear in the **Security** tab → **Code scanning alerts**.
+
+## Markdown
+
+**Use Case**: GitHub Actions job summaries, PR comments, documentation
+
+```bash
+aguara scan --format markdown ./skills/
+```
+
+Example output:
+
+```markdown
+## Aguara Security Scan
+
+> :red_circle: **12 critical** &nbsp; :orange_circle: **6 high** &nbsp; :yellow_circle: **3 medium** · `./skills/` · 12 files · 177 rules · 0.84s
+
+### `skills/deploy.md`
+
+| Severity | Rule | Finding | Line |
+|:--------:|------|---------|-----:|
+| :red_circle: | `PROMPT_INJECTION_001` | Instruction override attempt | 15 |
+| :red_circle: | `CRED_001` | OpenAI API key detected | 23 |
+
+### `skills/search.md`
+
+| Severity | Rule | Finding | Line |
+|:--------:|------|---------|-----:|
+| :orange_circle: | `EXFIL_005` | Webhook to external domain | 42 |
+| :orange_circle: | `CMD_EXEC_003` | Shell command execution | 48 |
+
+---
+
+<sub>Generated by [Aguara](https://github.com/garagon/aguara) v0.5.0 — security scanner for AI agent skills and MCP servers</sub>
+```
+
+### GitHub Actions Job Summary
+
+Render Markdown output in the Actions summary:
+
+```yaml
+- name: Scan and summarize
+  run: |
+    aguara scan --format markdown . >> $GITHUB_STEP_SUMMARY
+```
+
+Appears in the Actions run summary page.
+
+### PR Comments
+
+Post scan results as a PR comment:
+
+```yaml
+- name: Scan
+  run: aguara scan --format markdown . > scan-results.md
+
+- name: Comment PR
+  uses: actions/github-script@v7
+  with:
+    script: |
+      const fs = require('fs');
+      const body = fs.readFileSync('scan-results.md', 'utf8');
+      github.rest.issues.createComment({
+        issue_number: context.issue.number,
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        body: body
+      });
+```
+
+## Format Comparison
+
+| Format | Best For | Size | Structured | Human-Readable |
+|--------|----------|------|------------|----------------|
+| **Terminal** | Local dev, debugging | N/A | No | ✅ |
+| **JSON** | APIs, dashboards, custom tools | Medium | ✅ | No |
+| **SARIF** | GitHub Code Scanning, IDEs | Large | ✅ | No |
+| **Markdown** | PR comments, job summaries | Small | Semi | ✅ |
+
+## Writing to Files
+
+All formats support `-o` / `--output`:
+
+```bash
+# JSON to file
+aguara scan --format json -o results.json .
+
+# SARIF to file
+aguara scan --format sarif -o results.sarif .
+
+# Markdown to file
+aguara scan --format markdown -o summary.md .
+
+# Terminal to file (preserves colors if TTY detected)
+aguara scan -o scan-log.txt .
+```
+
+Default is stdout.
+
+## Filtering Output
+
+Combine `--severity` to reduce noise:
+
+```bash
+# Only critical and high
+aguara scan --format json --severity high . > critical.json
+
+# Only medium and above
+aguara scan --format sarif --severity medium -o findings.sarif .
+```
+
+## Exit Codes with --fail-on
+
+Control exit code based on severity:
+
+```bash
+# Exit 1 if high or critical findings
+aguara scan --format json --fail-on high . > results.json
+echo $?  # 1 if findings, 0 otherwise
+```
+
+Useful for CI pipelines that need to fail on security issues.
+
+## Related
+
+- [Incremental Scanning](/advanced/incremental-scanning) — Scan only changed files
+- [Rug-Pull Detection](/advanced/rug-pull-detection) — Track changes across scans
+- [MCP Discovery](/advanced/mcp-discovery) — Auto-detect and scan MCP configs
